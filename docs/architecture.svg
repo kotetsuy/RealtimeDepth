@@ -1,0 +1,72 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="340" viewBox="0 0 900 340">
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L9,3 z" fill="#333"/>
+    </marker>
+    <style>
+      .box { fill:#f7f7f7; stroke:#333; stroke-width:1.5; }
+      .mlbox { fill:#e8f0fe; stroke:#1a73e8; stroke-width:1.5; }
+      .gpubox { fill:#fdebd0; stroke:#d68910; stroke-width:1.5; }
+      .browserbox { fill:#e6f4ea; stroke:#137333; stroke-width:1.5; }
+      text { font-family: -apple-system, 'Segoe UI', sans-serif; fill:#222; font-size:13px; }
+      .title { font-weight:600; font-size:14px; }
+      .small { font-size:11px; fill:#555; }
+      .label { font-size:11px; fill:#1a73e8; }
+      line.flow { stroke:#333; stroke-width:1.5; fill:none; }
+    </style>
+  </defs>
+
+  <text x="450" y="28" text-anchor="middle" class="title" font-size="16">RealtimeDepth システム構成</text>
+
+  <!-- Camera -->
+  <rect class="box" x="20" y="130" width="130" height="80" rx="6"/>
+  <text x="85" y="160" text-anchor="middle" class="title">USB カメラ</text>
+  <text x="85" y="180" text-anchor="middle" class="small">/dev/v4l/by-id/...</text>
+  <text x="85" y="196" text-anchor="middle" class="small">640x480 / 30fps</text>
+
+  <!-- Worker -->
+  <rect class="mlbox" x="200" y="70" width="300" height="200" rx="6"/>
+  <text x="350" y="95" text-anchor="middle" class="title">DepthWorker (背景スレッド)</text>
+  <text x="350" y="125" text-anchor="middle">1. cv2.VideoCapture.read()</text>
+  <text x="350" y="145" text-anchor="middle">2. preprocess (resize 518² + 正規化)</text>
+  <text x="350" y="165" text-anchor="middle">3. session.run( ONNX )</text>
+  <text x="350" y="185" text-anchor="middle">4. depth_to_colormap (INFERNO)</text>
+  <text x="350" y="205" text-anchor="middle">5. hstack [元映像 | 深度マップ]</text>
+  <text x="350" y="225" text-anchor="middle">6. cv2.imencode → JPEG</text>
+  <text x="350" y="252" text-anchor="middle" class="small">latest_jpeg ← jpg ; frame_event.set()</text>
+
+  <!-- ONNX Runtime / MIGraphX -->
+  <rect class="gpubox" x="540" y="70" width="220" height="120" rx="6"/>
+  <text x="650" y="95" text-anchor="middle" class="title">ONNX Runtime 1.24</text>
+  <text x="650" y="118" text-anchor="middle">MIGraphX EP</text>
+  <text x="650" y="138" text-anchor="middle" class="small">migraphx_model_cache_dir</text>
+  <text x="650" y="156" text-anchor="middle" class="small">↓</text>
+  <text x="650" y="175" text-anchor="middle">ROCm 7.2.1 / gfx1151</text>
+
+  <!-- Flask -->
+  <rect class="box" x="540" y="210" width="220" height="80" rx="6"/>
+  <text x="650" y="235" text-anchor="middle" class="title">Flask サーバー</text>
+  <text x="650" y="255" text-anchor="middle" class="small">/  /stream  /stats</text>
+  <text x="650" y="272" text-anchor="middle" class="small">multipart/x-mixed-replace</text>
+
+  <!-- Chrome -->
+  <rect class="browserbox" x="800" y="130" width="80" height="80" rx="6"/>
+  <text x="840" y="160" text-anchor="middle" class="title">Chrome</text>
+  <text x="840" y="180" text-anchor="middle" class="small">&lt;img&gt;</text>
+  <text x="840" y="196" text-anchor="middle" class="small">/stream</text>
+
+  <!-- arrows -->
+  <line class="flow" x1="150" y1="170" x2="200" y2="170" marker-end="url(#arrow)"/>
+  <text x="175" y="162" text-anchor="middle" class="label">フレーム</text>
+
+  <line class="flow" x1="500" y1="120" x2="540" y2="120" marker-end="url(#arrow)"/>
+  <text x="520" y="112" text-anchor="middle" class="label">入力</text>
+  <line class="flow" x1="540" y1="155" x2="500" y2="155" marker-end="url(#arrow)"/>
+  <text x="520" y="148" text-anchor="middle" class="label">深度</text>
+
+  <line class="flow" x1="500" y1="250" x2="540" y2="250" marker-end="url(#arrow)"/>
+  <text x="520" y="242" text-anchor="middle" class="label">JPEG</text>
+
+  <line class="flow" x1="760" y1="250" x2="800" y2="180" marker-end="url(#arrow)"/>
+  <text x="785" y="225" text-anchor="middle" class="label">MJPEG</text>
+</svg>

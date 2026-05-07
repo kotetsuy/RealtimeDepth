@@ -1,0 +1,70 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="820" height="380" viewBox="0 0 820 380">
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L9,3 z" fill="#333"/>
+    </marker>
+    <style>
+      .box { fill:#f7f7f7; stroke:#333; stroke-width:1.2; }
+      .coldbox { fill:#fce8e6; stroke:#c5221f; stroke-width:1.2; }
+      .warmbox { fill:#e6f4ea; stroke:#137333; stroke-width:1.2; }
+      .cachebox { fill:#fff8e1; stroke:#b6862c; stroke-width:1.2; }
+      text { font-family: -apple-system, 'Segoe UI', sans-serif; fill:#222; font-size:12px; }
+      .title { font-weight:600; font-size:14px; }
+      .small { font-size:11px; fill:#555; }
+      .stage-title { font-weight:600; font-size:13px; }
+      line.flow { stroke:#333; stroke-width:1.2; fill:none; }
+    </style>
+  </defs>
+
+  <text x="410" y="26" text-anchor="middle" class="title" font-size="16">起動シーケンス: コールドスタート vs ウォームスタート</text>
+
+  <!-- Cold start row -->
+  <text x="60" y="78" class="stage-title">コールドスタート (初回 / キャッシュ無し)</text>
+  <rect class="box" x="60" y="90" width="120" height="50" rx="4"/>
+  <text x="120" y="110" text-anchor="middle">app.py 起動</text>
+  <text x="120" y="126" text-anchor="middle" class="small">~1s</text>
+
+  <rect class="box" x="200" y="90" width="120" height="50" rx="4"/>
+  <text x="260" y="110" text-anchor="middle">Session 作成</text>
+  <text x="260" y="126" text-anchor="middle" class="small">ONNX 読込 (~1s)</text>
+
+  <rect class="coldbox" x="340" y="90" width="220" height="50" rx="4"/>
+  <text x="450" y="110" text-anchor="middle" class="title">MIGraphX コンパイル</text>
+  <text x="450" y="126" text-anchor="middle" class="small">~110s (.mxr 生成)</text>
+
+  <rect class="cachebox" x="580" y="90" width="120" height="50" rx="4"/>
+  <text x="640" y="110" text-anchor="middle">.mxr 保存</text>
+  <text x="640" y="126" text-anchor="middle" class="small">~753 MB</text>
+
+  <rect class="box" x="60" y="160" width="120" height="50" rx="4"/>
+  <text x="120" y="180" text-anchor="middle">推論ループ開始</text>
+  <text x="120" y="196" text-anchor="middle" class="small">25 FPS</text>
+
+  <line class="flow" x1="180" y1="115" x2="200" y2="115" marker-end="url(#arrow)"/>
+  <line class="flow" x1="320" y1="115" x2="340" y2="115" marker-end="url(#arrow)"/>
+  <line class="flow" x1="560" y1="115" x2="580" y2="115" marker-end="url(#arrow)"/>
+  <line class="flow" x1="640" y1="140" x2="640" y2="155" stroke-dasharray="4 3"/>
+  <line class="flow" x1="640" y1="155" x2="120" y2="155" stroke-dasharray="4 3"/>
+  <line class="flow" x1="120" y1="155" x2="120" y2="160" marker-end="url(#arrow)" stroke-dasharray="4 3"/>
+
+  <text x="60" y="232" class="small" fill="#c5221f">合計 ~117 秒</text>
+
+  <!-- Warm start row -->
+  <text x="60" y="268" class="stage-title">ウォームスタート (2回目以降 / キャッシュヒット)</text>
+  <rect class="box" x="60" y="280" width="120" height="50" rx="4"/>
+  <text x="120" y="300" text-anchor="middle">app.py 起動</text>
+  <text x="120" y="316" text-anchor="middle" class="small">~1s</text>
+
+  <rect class="warmbox" x="200" y="280" width="220" height="50" rx="4"/>
+  <text x="310" y="300" text-anchor="middle" class="title">Session 作成 + .mxr ロード</text>
+  <text x="310" y="316" text-anchor="middle" class="small">~2s (キャッシュから即起動)</text>
+
+  <rect class="box" x="440" y="280" width="120" height="50" rx="4"/>
+  <text x="500" y="300" text-anchor="middle">推論ループ開始</text>
+  <text x="500" y="316" text-anchor="middle" class="small">25 FPS</text>
+
+  <line class="flow" x1="180" y1="305" x2="200" y2="305" marker-end="url(#arrow)"/>
+  <line class="flow" x1="420" y1="305" x2="440" y2="305" marker-end="url(#arrow)"/>
+
+  <text x="60" y="357" class="small" fill="#137333">合計 ~3 秒 (約 40x 高速)</text>
+</svg>

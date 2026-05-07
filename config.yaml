@@ -1,0 +1,26 @@
+camera:
+  # device: 整数 (V4L2 index) または文字列 (デバイスパス) を受け付ける。
+  # USB ポートが変わるとインデックスが変動するので、固定 ID パスの利用を推奨。
+  # 候補:
+  #   /dev/v4l/by-id/usb-DC474C08_P050301_SN0002_2K_USB_Camera_DC474C08_P050301_SN0002-video-index0
+  #   /dev/video0
+  #   0
+  device: /dev/v4l/by-id/usb-DC474C08_P050301_SN0002_2K_USB_Camera_DC474C08_P050301_SN0002-video-index0
+  width: 640
+  height: 480
+  fps: 30
+
+model:
+  path: depth_anything_v2_vits_518.onnx
+  input_size: 518
+
+server:
+  host: 0.0.0.0
+  port: 8000
+  jpeg_quality: 80
+
+runtime:
+  # MIGraphX のコンパイル結果をキャッシュ。同じ ONNX + 同じ GPU/ROCm の組み合わせなら
+  # 2回目以降は ~110s のコンパイルをスキップして数秒で起動できる。
+  # ONNX を作り直したら中身を消してよい (再生成される)。
+  compile_cache_dir: .migraphx_cache

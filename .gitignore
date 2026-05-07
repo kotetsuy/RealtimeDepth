@@ -1,3 +1,10 @@
+# Project-specific
+.migraphx_cache/
+.depth_app.pid
+depth_app.log
+*.onnx
+*.onnx.data
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
