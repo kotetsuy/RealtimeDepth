@@ -158,9 +158,12 @@ ls -lh ~/RealtimeDepth/depth_anything_v2_vits_518.onnx   # ~95 MB
 
 ---
 
-## 6. Adjust `config.yaml` (camera device)
+## 6. Adjust `config.yaml` (camera devices)
 
-Edit `~/RealtimeDepth/config.yaml` to point `camera.device` at your camera.
+Edit `~/RealtimeDepth/config.yaml` to register your camera(s). You can
+list **several cameras in priority order** under `camera.devices`; at
+startup the app automatically selects the first one that is actually
+connected, and follows USB hot-plug events at run time (see below).
 
 To survive USB-port changes, **prefer the stable path under
 `/dev/v4l/by-id/`**:
@@ -174,15 +177,53 @@ ls /dev/v4l/by-id/
 
 ```yaml
 camera:
-  device: /dev/v4l/by-id/usb-..._camera-video-index0
-  width: 640
-  height: 480
-  fps: 30
+  # Listed in priority order. The first connected one is picked.
+  devices:
+    - name: 2K USB Camera        # free-form label, shown in logs / overlay
+      device: /dev/v4l/by-id/usb-..._camera-video-index0
+      width: 640                 # optional; falls back to defaults below
+      height: 480
+      fps: 30
+    - name: Spare Camera
+      device: /dev/v4l/by-id/usb-..._other-video-index0
+  # Used when a device entry omits width/height/fps.
+  defaults:
+    width: 640
+    height: 480
+    fps: 30
 ```
 
-Both an integer (`device: 0`) and a string path
+Per device, both an integer (`device: 0`) and a string path
 (`device: /dev/video0`) are accepted, but the `by-id` form is
-robust to plugging the camera into a different port.
+robust to plugging the camera into a different port — and is
+recommended for reliable hot-plug detection.
+
+> **Backward compatible**: the old single-camera form is still accepted:
+>
+> ```yaml
+> camera:
+>   device: /dev/v4l/by-id/usb-..._camera-video-index0
+>   width: 640
+>   height: 480
+>   fps: 30
+> ```
+>
+> It is normalized internally to a one-entry `devices` list.
+
+### Hot-plug behaviour
+
+- **Auto-select on start**: the first connected camera from the list is
+  opened. If none is connected, the app still starts and serves a
+  "NO CAMERA" placeholder instead of crashing.
+- **Unplug / replug while running**: if the active camera is removed,
+  the stream switches to the placeholder and the app keeps polling;
+  when a registered camera is plugged back in it reconnects
+  automatically — the browser MJPEG stream never drops.
+- **Switching cameras**: to move to a different registered camera,
+  unplug the current one; on the next scan the app re-selects the
+  highest-priority connected camera.
+- **Multiple cameras connected**: only **one** camera (the
+  highest-priority connected entry) is streamed at a time.
 
 ---
 
@@ -205,13 +246,17 @@ Expected output:
 ```
 started (pid 12345), log: /home/test/RealtimeDepth/depth_app.log
 waiting for ready (cold start ~110s, cached ~3s)...
-ready. open http://localhost:8000/ or http://172.23.0.7:8000/
+ready (camera: 2K USB Camera). open http://localhost:8000/ or http://172.23.0.7:8000/
 launching Chrome...
 ```
 
+If no registered camera is connected, the app still starts and the
+message reads `ready (no camera connected; serving placeholder)` — plug
+a camera in and the stream appears automatically.
+
 You should see the original camera feed and the depth map (bright = near,
-dark = far) side-by-side in Chrome, with an FPS counter overlaid in
-the top-left.
+dark = far) side-by-side in Chrome, with an FPS counter and the selected
+camera name overlaid in the top-left.
 
 ---
 
@@ -250,7 +295,7 @@ Then from your Mac's Chrome: `http://<NucBox-IP>:8000/`.
 | --- | --- |
 | `ROCMExecutionProvider` not in providers list | Expected — this project uses `MIGraphXExecutionProvider`. |
 | MIGraphX compile runs every time | Confirm `runtime.compile_cache_dir` in `config.yaml` is set and writable. |
-| `Cannot open camera ...` | Run `ls /dev/video*`; make sure no other app is holding the device. |
+| Stream stuck on the "NO CAMERA" placeholder | No registered camera is connected. Run `ls /dev/v4l/by-id/` and confirm a path matching a `camera.devices` entry exists and no other app is holding the device. |
 | Chrome doesn't auto-launch | `DISPLAY` / `WAYLAND_DISPLAY` is missing (e.g., over SSH). Open the printed URL manually. |
 | Low FPS | `./stop_all.sh && rm -rf .migraphx_cache && ./start_all.sh` to rebuild the cache; check `rocm-smi` for GPU utilization. |
 

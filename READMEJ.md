@@ -157,8 +157,10 @@ ls -lh ~/RealtimeDepth/depth_anything_v2_vits_518.onnx   # ~95 MB
 
 ## 6. config.yaml の調整 (カメラデバイス)
 
-`~/RealtimeDepth/config.yaml` の `camera.device` をお手元のカメラに合わせて
-書き換えます。
+`~/RealtimeDepth/config.yaml` にお手元のカメラを登録します。`camera.devices`
+配下に **複数のカメラを優先順位付きで** 列挙でき、起動時には実際に
+接続されているものが先頭優先で自動選択されます。さらに動作中の USB
+抜き差しにも追従します (下記参照)。
 
 USB ポートが変わってもデバイス名が変わらないよう、**`/dev/v4l/by-id/`
 配下の固定パス**を推奨します:
@@ -172,14 +174,50 @@ ls /dev/v4l/by-id/
 
 ```yaml
 camera:
-  device: /dev/v4l/by-id/usb-..._camera-video-index0
-  width: 640
-  height: 480
-  fps: 30
+  # 上から優先。接続されているものが選ばれる。
+  devices:
+    - name: 2K USB Camera        # ログ/画面表示用の任意ラベル
+      device: /dev/v4l/by-id/usb-..._camera-video-index0
+      width: 640                 # 省略時は下の defaults を使用
+      height: 480
+      fps: 30
+    - name: 予備カメラ
+      device: /dev/v4l/by-id/usb-..._other-video-index0
+  # devices で width/height/fps を省略したときの既定値
+  defaults:
+    width: 640
+    height: 480
+    fps: 30
 ```
 
-整数 (`device: 0`) でもパス (`device: /dev/video0`) でも動きますが、
-ポート差し替えに強いのは `by-id` 形式です。
+デバイスごとに整数 (`device: 0`) でもパス (`device: /dev/video0`) でも
+動きますが、ポート差し替えに強く、ホットプラグ検出も確実なのは `by-id`
+形式です。
+
+> **後方互換**: 旧形式の単一指定もそのまま使えます:
+>
+> ```yaml
+> camera:
+>   device: /dev/v4l/by-id/usb-..._camera-video-index0
+>   width: 640
+>   height: 480
+>   fps: 30
+> ```
+>
+> 内部で 1 要素の `devices` リストに正規化されます。
+
+### ホットプラグの挙動
+
+- **起動時の自動選択**: リストの中で最初に接続されているカメラを開きます。
+  1台も接続されていなくてもエラーで落ちず、「NO CAMERA」プレースホルダを
+  配信して待機します。
+- **動作中の抜き差し**: 配信中のカメラが抜かれるとプレースホルダ表示に
+  切り替わり、ポーリングを続けます。登録済みカメラが再び挿されると自動的に
+  再接続します (ブラウザの MJPEG ストリームは切れません)。
+- **カメラの切り替え**: 別の登録済みカメラに移したい場合は、現在のカメラを
+  抜いてください。次のスキャンで先頭優先のカメラが再選択されます。
+- **複数同時接続**: 同時に複数刺さっている場合は、優先順位が最も高い1台
+  だけを配信します。
 
 ---
 
@@ -202,12 +240,16 @@ cd ~/RealtimeDepth
 ```
 started (pid 12345), log: /home/test/RealtimeDepth/depth_app.log
 waiting for ready (cold start ~110s, cached ~3s)...
-ready. open http://localhost:8000/ or http://172.23.0.7:8000/
+ready (camera: 2K USB Camera). open http://localhost:8000/ or http://172.23.0.7:8000/
 launching Chrome...
 ```
 
+登録済みカメラが1台も接続されていない場合もアプリは起動し、メッセージは
+`ready (no camera connected; serving placeholder)` になります。カメラを
+挿せば自動的にストリームが現れます。
+
 Chrome に元映像と深度マップ (近=明 / 遠=暗) が横並びで表示され、
-左上に FPS が出れば成功です。
+左上に FPS と選択中のカメラ名が出れば成功です。
 
 ---
 
@@ -245,7 +287,7 @@ Mac の Chrome から `http://<NucBoxのIP>:8000/` でアクセス。
 | --- | --- |
 | `ROCMExecutionProvider` が出ない | 想定通り。本プロジェクトは `MIGraphXExecutionProvider` を使います |
 | MIGraphX のコンパイルが毎回走る | `config.yaml` の `runtime.compile_cache_dir` が書き込み可能か確認 |
-| `Cannot open camera ...` | `ls /dev/video*` でデバイス確認、別アプリが占有していないか確認 |
+| 「NO CAMERA」プレースホルダから変わらない | 登録済みカメラが未接続。`ls /dev/v4l/by-id/` で `camera.devices` のいずれかに一致するパスがあるか、別アプリが占有していないか確認 |
 | Chrome が自動起動しない | `DISPLAY` / `WAYLAND_DISPLAY` 不在 (SSH 等)。表示された URL を手動で開く |
 | FPS が出ない | `./stop_all.sh && rm -rf .migraphx_cache && ./start_all.sh` でキャッシュ再生成、`rocm-smi` で GPU 使用率確認 |
 
