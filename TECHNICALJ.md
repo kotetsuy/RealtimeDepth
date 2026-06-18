@@ -246,6 +246,42 @@ runtime:
 指定することも可能です (start_all.sh が config を読まない部分は影響します
 が、`app.py` は `CONFIG_PATH` を尊重します)。
 
+### 新規カメラの登録手順
+
+1. カメラを接続した状態で `by-id` の固定パスを確認する:
+
+   ```bash
+   ls -l /dev/v4l/by-id/
+   ```
+
+   USB インデックス (`/dev/video*`) は挿し直すと変動するので、ポートに
+   依存しない `by-id` パスを使うのが推奨です。capture ストリームは
+   `-video-index0` で終わるもので、`-video-index1` 以降はメタデータ用なので
+   選ばないでください。
+
+2. `config.yaml` の `camera.devices` にエントリを 1 つ追記する:
+
+   ```yaml
+   camera:
+     devices:
+       - name: ELECOM 2MP Webcam               # ログ/画面表示/stats 用の任意ラベル
+         device: /dev/v4l/by-id/usb-Alcor_Micro__Corp._ELECOM_2MP_Webcam-video-index0
+   ```
+
+   `width`/`height`/`fps` を省略すると `defaults` が適用されます。
+   リストの上にあるものほど優先され、複数同時接続時は最初に見つかった
+   1 台だけが配信されます。
+
+3. サーバーを再起動して反映する:
+
+   ```bash
+   ./stop_all.sh && ./start_all.sh
+   ```
+
+   起動後、ログに `[camera] connected: <name> (...)` が出れば配信開始です。
+   USB ホットプラグに対応しているので、起動後に挿しても約 1 秒以内に
+   自動検出されます。
+
 ---
 
 ## 8. パフォーマンス調整

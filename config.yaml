@@ -10,6 +10,8 @@ camera:
       device: /dev/v4l/by-id/usb-DC474C08_P050301_SN0002_2K_USB_Camera_DC474C08_P050301_SN0002-video-index0
     - name: Jieli Camera
       device: /dev/v4l/by-id/usb-Jieli_Technology_USB_PHY_2.0-video-index0
+    - name: ELECOM 2MP Webcam
+      device: /dev/v4l/by-id/usb-Alcor_Micro__Corp._ELECOM_2MP_Webcam-video-index0
 
   # devices 内で width/height/fps が省略されたときの既定値。
   defaults:

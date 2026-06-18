@@ -263,6 +263,42 @@ disconnected).
 You can point `app.py` at a different config with the
 `CONFIG_PATH=other.yaml` environment variable.
 
+### Registering a new camera
+
+1. With the camera plugged in, find its stable `by-id` path:
+
+   ```bash
+   ls -l /dev/v4l/by-id/
+   ```
+
+   USB indexes (`/dev/video*`) shift when you replug, so prefer the
+   port-independent `by-id` path. The capture stream is the one ending in
+   `-video-index0`; `-video-index1` and higher are metadata streams, so
+   don't pick those.
+
+2. Add one entry under `camera.devices` in `config.yaml`:
+
+   ```yaml
+   camera:
+     devices:
+       - name: ELECOM 2MP Webcam               # any label for logs / overlay / /stats
+         device: /dev/v4l/by-id/usb-Alcor_Micro__Corp._ELECOM_2MP_Webcam-video-index0
+   ```
+
+   Omitting `width`/`height`/`fps` falls back to `defaults`. Entries higher
+   in the list have priority; when several are connected at once, only the
+   first match is streamed.
+
+3. Restart the server to apply:
+
+   ```bash
+   ./stop_all.sh && ./start_all.sh
+   ```
+
+   On startup, `[camera] connected: <name> (...)` in the log means streaming
+   has begun. USB hot-plug is supported, so plugging in after startup is
+   auto-detected within ~1 second.
+
 ---
 
 ## 8. Performance knobs
