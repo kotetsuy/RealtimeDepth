@@ -36,7 +36,16 @@ for _ in $(seq 1 60); do
   # カメラ未接続でもプレースホルダ配信で稼働するため fps>0 は条件にしない。
   resp=$(curl -fs --max-time 1 "http://127.0.0.1:${PORT}/stats" 2>/dev/null || true)
   if [[ -n "$resp" ]]; then
+    # サーバは Flask 起動直後に /stats を返すが、DepthWorker がカメラを
+    # 開き終えるのは数百 ms 後。最初の 1 回だけで判定すると接続済みでも
+    # "no camera" と誤表示するため、数秒だけカメラ名が出るのを待つ。
     cam=$(printf '%s' "$resp" | sed -n 's/.*"camera":\s*"\([^"]*\)".*/\1/p')
+    for _ in $(seq 1 5); do
+      [[ -n "$cam" ]] && break
+      sleep 1
+      resp=$(curl -fs --max-time 1 "http://127.0.0.1:${PORT}/stats" 2>/dev/null || true)
+      cam=$(printf '%s' "$resp" | sed -n 's/.*"camera":\s*"\([^"]*\)".*/\1/p')
+    done
     LAN_IP=$(ip route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="src"){print $(i+1); exit}}')
     URL="http://localhost:${PORT}/"
     if [[ -n "$cam" ]]; then
