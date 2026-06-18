@@ -431,3 +431,17 @@ RealtimeDepth/
 ├── .depth_app.pid                            (gitignored)
 └── depth_app.log                             (gitignored)
 ```
+
+---
+
+## 13. Changelog
+
+- **Multi-camera / USB hot-plug support**: introduced the priority-ordered
+  `camera.devices` list and automatic reconnection. The legacy single-camera
+  form is still accepted for backward compatibility.
+- **Registered connected camera**: added the ELECOM 2MP Webcam by its stable
+  `by-id` path. See §7 for the procedure to add a new camera.
+- **Startup message fix**: fixed the false "no camera connected" message caused
+  by the few-hundred-ms gap between `/stats` responding and the DepthWorker
+  opening the camera. `start_all.sh` now waits a few seconds for the camera
+  name to settle before deciding.

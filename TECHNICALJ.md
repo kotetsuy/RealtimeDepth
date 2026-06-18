@@ -404,3 +404,15 @@ RealtimeDepth/
 ├── .depth_app.pid                            (gitignore)
 └── depth_app.log                             (gitignore)
 ```
+
+---
+
+## 13. 変更履歴
+
+- **複数カメラ / USB ホットプラグ対応**: `camera.devices` の優先順位リストと
+  自動再接続を導入。旧形式の単一カメラ指定も後方互換で受け付ける。
+- **接続カメラの登録**: ELECOM 2MP Webcam を `by-id` 固定パスで登録。
+  新規カメラの追加手順は §7 を参照。
+- **起動メッセージ修正**: `/stats` 応答から DepthWorker がカメラを開くまでの
+  数百 ms のタイムラグで「no camera connected」と誤表示していた問題を修正。
+  `start_all.sh` がカメラ名の確定を数秒待ってから判定するようにした。
