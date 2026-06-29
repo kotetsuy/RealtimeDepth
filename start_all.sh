@@ -14,7 +14,7 @@ rm -f "$PID_FILE"
 
 # shellcheck disable=SC1091
 source .venv/bin/activate
-export HSA_OVERRIDE_GFX_VERSION=11.5.1
+export HSA_OVERRIDE_GFX_VERSION=11.5.0
 
 PORT=$(python -c "import yaml; print(yaml.safe_load(open('config.yaml'))['server']['port'])")
 

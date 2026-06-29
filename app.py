@@ -170,7 +170,7 @@ INDEX_HTML = """
   </style>
 </head>
 <body>
-  <h1>Depth Anything V2 Small / onnxruntime-migraphx / gfx1151</h1>
+  <h1>Depth Anything V2 Small / onnxruntime-migraphx / gfx1150</h1>
   <img class="stream" src="/stream" alt="depth stream">
   <div class="legend">
     左: 元映像 / 右: 深度マップ (明=近い, 暗=遠い, 想定レンジ ~10m)

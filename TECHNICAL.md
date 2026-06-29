@@ -25,7 +25,7 @@ Components:
 | --- | --- | --- |
 | Camera I/O | OpenCV (V4L2 backend) | Frame capture |
 | Inference | ONNX Runtime 1.24 / MIGraphX EP | Monocular depth estimation |
-| GPU runtime | ROCm 7.2.1 (gfx1151) | Kernel execution |
+| GPU runtime | ROCm 7.2.1 (gfx1150) | Kernel execution |
 | Model | Depth Anything V2 Small (vits) | ~24.8 M params |
 | Streaming | Flask + multipart/x-mixed-replace | MJPEG to the browser |
 
@@ -86,7 +86,7 @@ and MIGraphX parses it cleanly.
 ![startup sequence](./docs/startup_sequence-en.svg)
 
 MIGraphX performs **AOT compilation** on the first `session.run()`,
-generating HIP kernels for gfx1151. For Depth Anything V2 Small at
+generating HIP kernels for gfx1150. For Depth Anything V2 Small at
 518² this takes about **110 seconds**. Doing this every restart
 destroys the development cycle, so we use the
 `migraphx_model_cache_dir` provider option to persist and reuse the
@@ -226,7 +226,7 @@ Camera I/O and JPEG encode together stay below 5 ms.
 
 ```
 1. Check .depth_app.pid (refuse double-starts)
-2. Activate .venv, export HSA_OVERRIDE_GFX_VERSION=11.5.1
+2. Activate .venv, export HSA_OVERRIDE_GFX_VERSION=11.5.0
 3. Read PORT from config.yaml (yaml.safe_load via the venv's python)
 4. nohup python app.py > depth_app.log 2>&1 &
 5. Poll /stats every 3 s until fps > 0, with a 180 s budget
@@ -269,7 +269,7 @@ The ONNX was exported with the new dynamo exporter. Re-export with
 
 ### GPU isn't being used / inference is CPU-slow
 - Check `session.get_providers()[0]` is `MIGraphXExecutionProvider`
-- Confirm `HSA_OVERRIDE_GFX_VERSION=11.5.1` is set (start_all.sh sets
+- Confirm `HSA_OVERRIDE_GFX_VERSION=11.5.0` is set (start_all.sh sets
   it automatically)
 - Run `rocm-smi` in another terminal and watch GPU utilization rise
 
@@ -299,7 +299,7 @@ of port.
 - **HTTPS for remote access**: Tailscale + Caddy is the quickest path
   to TLS for off-LAN viewing.
 - **FP16 model**: convert with `onnxconverter_common.float16` to halve
-  weight memory traffic; expect ~1.3–1.5x speedup on gfx1151.
+  weight memory traffic; expect ~1.3–1.5x speedup on gfx1150.
 
 ---
 

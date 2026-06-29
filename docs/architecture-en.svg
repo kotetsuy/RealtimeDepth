@@ -41,7 +41,7 @@
   <text x="650" y="118" text-anchor="middle">MIGraphX EP</text>
   <text x="650" y="138" text-anchor="middle" class="small">migraphx_model_cache_dir</text>
   <text x="650" y="156" text-anchor="middle" class="small">↓</text>
-  <text x="650" y="175" text-anchor="middle">ROCm 7.2.1 / gfx1151</text>
+  <text x="650" y="175" text-anchor="middle">ROCm 7.2.1 / gfx1150</text>
 
   <!-- Flask -->
   <rect class="box" x="540" y="210" width="220" height="80" rx="6"/>

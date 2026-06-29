@@ -1,6 +1,6 @@
 # RealtimeDepth — リアルタイム深度推定デモ (セットアップ手順書)
 
-Depth Anything V2 Small を AMD Ryzen AI MAX+ 395 (gfx1151 / Strix Halo) 上で
+Depth Anything V2 Small を AMD Ryzen AI MAX+ 395 (gfx1150 / Strix Halo) 上で
 ROCm + MIGraphX で動かし、USB カメラ映像を Chrome に MJPEG ストリーミング
 するデモです。
 
@@ -14,7 +14,7 @@ ROCm + MIGraphX で動かし、USB カメラ映像を Chrome に MJPEG ストリ
 
 | 項目 | バージョン / 状態 |
 | --- | --- |
-| マシン | GMKtec NucBox EVO X2 等 (Ryzen AI MAX+ 395, gfx1151) |
+| マシン | GMKtec NucBox EVO X2 等 (Ryzen AI MAX+ 395, gfx1150) |
 | OS | Ubuntu 24.04 |
 | ROCm | 7.2.x がインストール済み (`/opt/rocm` から参照可能) |
 | Python | 3.10 (Ubuntu 24.04 標準は 3.12 なので別途インストール) |
@@ -192,7 +192,7 @@ cd ~/RealtimeDepth
 
 実行されること:
 
-1. venv activation + `HSA_OVERRIDE_GFX_VERSION=11.5.1` を内部設定
+1. venv activation + `HSA_OVERRIDE_GFX_VERSION=11.5.0` を内部設定
 2. `app.py` をバックグラウンド起動 (PID は `.depth_app.pid` に保存)
 3. 初回は MIGraphX のコンパイル待ち (~110 秒)、2回目以降は ~3 秒
 4. 起動完了後、Chrome を新規ウィンドウで `http://localhost:8000/` に開く

@@ -1,7 +1,7 @@
 # RealtimeDepth — realtime depth estimation demo (setup guide)
 
 A demo that runs Depth Anything V2 Small on an AMD Ryzen AI MAX+ 395
-(gfx1151 / Strix Halo) via ROCm + MIGraphX, and streams depth-mapped
+(gfx1150 / Strix Halo) via ROCm + MIGraphX, and streams depth-mapped
 USB camera footage to Chrome over MJPEG.
 
 This document walks you from **`git clone` to `./start_all.sh` showing the
@@ -17,7 +17,7 @@ A Japanese version of this guide is available as
 
 | Item | Required state |
 | --- | --- |
-| Machine | GMKtec NucBox EVO X2 or similar (Ryzen AI MAX+ 395, gfx1151) |
+| Machine | GMKtec NucBox EVO X2 or similar (Ryzen AI MAX+ 395, gfx1150) |
 | OS | Ubuntu 24.04 |
 | ROCm | 7.2.x already installed (reachable via `/opt/rocm`) |
 | Python | 3.10 (Ubuntu 24.04 ships 3.12, so install 3.10 separately) |
@@ -195,7 +195,7 @@ cd ~/RealtimeDepth
 
 What this does:
 
-1. activates the venv and exports `HSA_OVERRIDE_GFX_VERSION=11.5.1`
+1. activates the venv and exports `HSA_OVERRIDE_GFX_VERSION=11.5.0`
 2. starts `app.py` in the background (PID written to `.depth_app.pid`)
 3. waits for MIGraphX compile (~110 s on first run, ~3 s when cached)
 4. once ready, opens Chrome to `http://localhost:8000/` in a new window
