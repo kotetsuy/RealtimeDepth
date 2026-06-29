@@ -19,6 +19,12 @@ depth inference → colormap → JPEG encode — and writes only the resulting
 `latest_jpeg` to a shared variable. Flask's `/stream` endpoint then
 streams those JPEGs to Chrome over `multipart/x-mixed-replace`.
 
+`DepthWorker` also owns **camera connection management**: it is a small
+state machine that auto-selects a connected camera from a priority list,
+tolerates USB hot-plug (unplug / replug / swap) without crashing, and
+serves a placeholder frame while disconnected. See
+[§5](#5-threading-model-and-synchronization) for details.
+
 Components:
 
 | Layer | Tech | Role |
@@ -135,7 +141,42 @@ self.lock = threading.Lock()
 self.frame_event = threading.Event()
 self.latest_jpeg = None
 self.fps = 0.0
+self.current_name = None   # name of the streaming camera (None if disconnected)
 ```
+
+### Camera connection state machine
+
+The same worker loop also manages the camera lifecycle, so a single
+thread owns both inference and connection state (no extra locking
+needed). It transitions between two states:
+
+```
+[DISCONNECTED] --(registered camera found + opens OK)--> [STREAMING]
+[STREAMING]    --(read fails repeatedly or device path gone)--> [DISCONNECTED]
+```
+
+- **DISCONNECTED**: every ~1 s it calls `find_connected_camera()`, which
+  walks `camera.devices` in priority order, checks the device path
+  exists, and verifies it by actually opening it and reading one frame.
+  Meanwhile it keeps publishing a "NO CAMERA" placeholder JPEG, so the
+  browser's MJPEG connection never drops and recovers the instant a
+  camera is plugged in. The app therefore **starts even with no camera
+  attached** (no more `RuntimeError`).
+- **STREAMING**: normal capture → inference → encode. A single failed
+  `cap.read()` is not treated as a disconnect; only a run of
+  consecutive failures (`READ_FAIL_LIMIT`, ~10) or the device path
+  disappearing (`os.path.exists`) triggers `cap.release()` and a return
+  to DISCONNECTED. Both checks are used because `cap.read()` can keep
+  blocking on some cameras after the device is yanked.
+- **One camera at a time**: selection is first-match in priority order,
+  so when several registered cameras are connected only the
+  highest-priority one streams. Streaming does **not** preempt — a
+  higher-priority camera plugged in mid-stream does not interrupt the
+  current feed; unplug the active camera to force a re-select.
+
+Detection is poll-based (path existence + read failures) rather than
+event-driven (`pyudev`) to avoid an extra dependency; a 1 s poll is
+imperceptible in practice.
 
 We **only keep the most recent frame** — older frames are dropped.
 The `Event` ensures HTTP threads only wake up when a new frame is
@@ -185,10 +226,18 @@ intuitive for the viewer.
 
 ```yaml
 camera:
-  device: <int|str>      # 0 / "/dev/video0" / "/dev/v4l/by-id/usb-...-video-index0"
-  width: 640
-  height: 480
-  fps: 30
+  devices:               # priority-ordered; first connected one is used
+    - name: 2K USB Camera                 # label for logs / overlay / /stats
+      device: <int|str>  # 0 / "/dev/video0" / "/dev/v4l/by-id/usb-...-video-index0"
+      width: 640         # optional per device; falls back to defaults
+      height: 480
+      fps: 30
+    - name: Spare Camera
+      device: <int|str>
+  defaults:              # applied when a device entry omits width/height/fps
+    width: 640
+    height: 480
+    fps: 30
 
 model:
   path: depth_anything_v2_vits_518.onnx
@@ -203,8 +252,52 @@ runtime:
   compile_cache_dir: .migraphx_cache  # set null to disable caching
 ```
 
+The legacy single-camera form (`camera.device`/`width`/`height`/`fps`
+at the top level) is still accepted and normalized internally into a
+one-entry `devices` list, so existing configs keep working.
+
+`/stats` returns the selected camera too:
+`{"fps": 25.7, "camera": "2K USB Camera"}` (or `"camera": null` while
+disconnected).
+
 You can point `app.py` at a different config with the
 `CONFIG_PATH=other.yaml` environment variable.
+
+### Registering a new camera
+
+1. With the camera plugged in, find its stable `by-id` path:
+
+   ```bash
+   ls -l /dev/v4l/by-id/
+   ```
+
+   USB indexes (`/dev/video*`) shift when you replug, so prefer the
+   port-independent `by-id` path. The capture stream is the one ending in
+   `-video-index0`; `-video-index1` and higher are metadata streams, so
+   don't pick those.
+
+2. Add one entry under `camera.devices` in `config.yaml`:
+
+   ```yaml
+   camera:
+     devices:
+       - name: ELECOM 2MP Webcam               # any label for logs / overlay / /stats
+         device: /dev/v4l/by-id/usb-Alcor_Micro__Corp._ELECOM_2MP_Webcam-video-index0
+   ```
+
+   Omitting `width`/`height`/`fps` falls back to `defaults`. Entries higher
+   in the list have priority; when several are connected at once, only the
+   first match is streamed.
+
+3. Restart the server to apply:
+
+   ```bash
+   ./stop_all.sh && ./start_all.sh
+   ```
+
+   On startup, `[camera] connected: <name> (...)` in the log means streaming
+   has begun. USB hot-plug is supported, so plugging in after startup is
+   auto-detected within ~1 second.
 
 ---
 
@@ -229,8 +322,14 @@ Camera I/O and JPEG encode together stay below 5 ms.
 2. Activate .venv, export HSA_OVERRIDE_GFX_VERSION=11.5.0
 3. Read PORT from config.yaml (yaml.safe_load via the venv's python)
 4. nohup python app.py > depth_app.log 2>&1 &
-5. Poll /stats every 3 s until fps > 0, with a 180 s budget
+5. Poll /stats every 3 s until it returns HTTP 200, with a 180 s budget
+   - Readiness is server-up, not fps > 0, so it succeeds even when no
+     camera is connected (the worker serves a placeholder) — Flask only
+     starts after the MIGraphX compile, so a 200 already implies compile
+     is done
    - Cold runs spend ~110 s of that budget in MIGraphX compile
+   - The "ready" line reports the selected camera, or notes that a
+     placeholder is being served when none is connected
    - On unexpected exit, tail the log and exit 1
 6. Read the LAN IP via `ip route get 1.1.1.1` and print the URL
 7. If DISPLAY/WAYLAND_DISPLAY is set, launch google-chrome on that URL
@@ -281,9 +380,17 @@ The ONNX was exported with the new dynamo exporter. Re-export with
   worker bandwidth
 
 ### Camera stops working after a port change
-`/dev/video*` indexes shift around. Set `camera.device` in `config.yaml`
-to a `/dev/v4l/by-id/...` path so the same camera is found regardless
-of port.
+`/dev/video*` indexes shift around. Use `/dev/v4l/by-id/...` paths for
+the `camera.devices` entries so the same camera is found regardless of
+port. With a `by-id` path the worker also reconnects automatically after
+an unplug/replug; with bare integer indexes a re-plug may grab a
+different camera.
+
+### Stuck on the "NO CAMERA" placeholder
+No registered camera is currently connected. Check that a path listed
+under `camera.devices` exists (`ls /dev/v4l/by-id/`) and that no other
+process holds the device. The app polls every ~1 s and switches to the
+live feed as soon as a registered camera appears — no restart needed.
 
 ---
 
@@ -324,3 +431,17 @@ RealtimeDepth/
 ├── .depth_app.pid                            (gitignored)
 └── depth_app.log                             (gitignored)
 ```
+
+---
+
+## 13. Changelog
+
+- **Multi-camera / USB hot-plug support**: introduced the priority-ordered
+  `camera.devices` list and automatic reconnection. The legacy single-camera
+  form is still accepted for backward compatibility.
+- **Registered connected camera**: added the ELECOM 2MP Webcam by its stable
+  `by-id` path. See §7 for the procedure to add a new camera.
+- **Startup message fix**: fixed the false "no camera connected" message caused
+  by the few-hundred-ms gap between `/stats` responding and the DepthWorker
+  opening the camera. `start_all.sh` now waits a few seconds for the camera
+  name to settle before deciding.

@@ -21,10 +21,62 @@ with open(CONFIG_PATH, 'r') as f:
 MODEL_PATH = CONFIG['model']['path']
 INPUT_SIZE = CONFIG['model']['input_size']
 
-CAMERA_DEVICE = CONFIG['camera']['device']  # int (V4L2 index) または str (デバイスパス)
-CAM_WIDTH = CONFIG['camera']['width']
-CAM_HEIGHT = CONFIG['camera']['height']
-CAM_FPS = CONFIG['camera']['fps']
+
+class CameraConfig:
+    """1 台分のカメラ設定。"""
+
+    def __init__(self, device, width, height, fps, name=None):
+        self.device = device  # int (V4L2 index) または str (デバイスパス)
+        self.width = width
+        self.height = height
+        self.fps = fps
+        self.name = name or str(device)
+
+    def device_path(self):
+        """存在確認に使う実ファイルパス。整数指定は /dev/video{N} に対応付ける。"""
+        if isinstance(self.device, int):
+            return f'/dev/video{self.device}'
+        return str(self.device)
+
+    def __repr__(self):
+        return f'<CameraConfig {self.name!r} device={self.device!r}>'
+
+
+def load_camera_configs(config):
+    """config['camera'] を CameraConfig のリストへ正規化する。
+
+    新形式 (camera.devices リスト) と旧形式 (camera.device 直書き) の両方に対応。
+    """
+    cam = config['camera']
+    defaults = cam.get('defaults', {})
+    default_w = defaults.get('width', 640)
+    default_h = defaults.get('height', 480)
+    default_fps = defaults.get('fps', 30)
+
+    if 'devices' in cam:
+        entries = cam['devices']
+    else:
+        # 旧形式: 単一指定を 1 要素リストへ正規化。
+        entries = [{
+            'device': cam['device'],
+            'width': cam.get('width', default_w),
+            'height': cam.get('height', default_h),
+            'fps': cam.get('fps', default_fps),
+        }]
+
+    configs = []
+    for entry in entries:
+        configs.append(CameraConfig(
+            device=entry['device'],
+            width=entry.get('width', default_w),
+            height=entry.get('height', default_h),
+            fps=entry.get('fps', default_fps),
+            name=entry.get('name'),
+        ))
+    return configs
+
+
+CAMERA_CONFIGS = load_camera_configs(CONFIG)
 
 JPEG_QUALITY = CONFIG['server']['jpeg_quality']
 HOST = CONFIG['server']['host']
@@ -78,33 +130,119 @@ def depth_to_colormap(depth, target_shape):
     return cv2.applyColorMap(norm, cv2.COLORMAP_INFERNO)
 
 
-class DepthWorker:
-    def __init__(self):
-        self.cap = cv2.VideoCapture(CAMERA_DEVICE, cv2.CAP_V4L2)
-        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, CAM_WIDTH)
-        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, CAM_HEIGHT)
-        self.cap.set(cv2.CAP_PROP_FPS, CAM_FPS)
-        if not self.cap.isOpened():
-            raise RuntimeError(f'Cannot open camera {CAMERA_DEVICE!r}')
+def open_camera(cfg):
+    """CameraConfig を開いて検証する。成功時 VideoCapture、失敗時 None。"""
+    cap = cv2.VideoCapture(cfg.device, cv2.CAP_V4L2)
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, cfg.width)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, cfg.height)
+    cap.set(cv2.CAP_PROP_FPS, cfg.fps)
+    if not cap.isOpened():
+        cap.release()
+        return None
+    # 「開けたが読めない」ケースを除外するため試し読みする。
+    ret, _ = cap.read()
+    if not ret:
+        cap.release()
+        return None
+    return cap
 
+
+def find_connected_camera(configs):
+    """登録カメラのうち接続されているものを先頭優先で 1 台開いて返す。
+
+    複数刺さっていてもリスト先頭に近いものだけを選ぶ。戻り値 (cfg, cap) / None。
+    """
+    for cfg in configs:
+        # まずパス存在を確認(存在しなければ open を試さず次へ)。
+        if not os.path.exists(cfg.device_path()):
+            continue
+        cap = open_camera(cfg)
+        if cap is not None:
+            return cfg, cap
+    return None
+
+
+def make_placeholder(message):
+    """カメラ未接続時に配信するプレースホルダ JPEG を生成する。"""
+    w = max(CAMERA_CONFIGS[0].width if CAMERA_CONFIGS else 640, 640)
+    h = CAMERA_CONFIGS[0].height if CAMERA_CONFIGS else 480
+    img = np.zeros((h, w, 3), dtype=np.uint8)
+    cv2.putText(img, 'NO CAMERA', (20, h // 2 - 20),
+                cv2.FONT_HERSHEY_SIMPLEX, 1.2, (60, 60, 220), 3)
+    cv2.putText(img, message, (20, h // 2 + 20),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1)
+    ok, jpg = cv2.imencode('.jpg', img, [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY])
+    return jpg.tobytes() if ok else None
+
+
+class DepthWorker:
+    """カメラ接続をステートマシンで管理し、ホットプラグに追従する。
+
+    DISCONNECTED <-> STREAMING を遷移。未接続中はプレースホルダを配信し続けるので
+    ブラウザの MJPEG ストリームは切れず、カメラを刺した瞬間に映像へ復帰する。
+    """
+
+    SCAN_INTERVAL = 1.0   # 未接続時の再スキャン間隔 [s]
+    READ_FAIL_LIMIT = 10  # 連続 read 失敗が続いたら切断とみなす
+
+    def __init__(self):
         self.lock = threading.Lock()
         self.frame_event = threading.Event()
         self.latest_jpeg = None
         self.fps = 0.0
+        self.current_name = None  # 配信中のカメラ名 (未接続時 None)
         self.running = True
         self.thread = threading.Thread(target=self._loop, daemon=True)
         self.thread.start()
 
+    def _publish(self, jpg, fps=0.0, name=None):
+        with self.lock:
+            self.latest_jpeg = jpg
+            self.fps = fps
+            self.current_name = name
+        self.frame_event.set()
+
     def _loop(self):
+        cap = None
+        cfg = None
         fps_alpha = 0.9
         fps_avg = 0.0
         frame_idx = 0
+        read_fails = 0
+        last_scan = 0.0
+
         while self.running:
+            # === DISCONNECTED: 接続を待つ ===
+            if cap is None:
+                now = time.time()
+                if now - last_scan >= self.SCAN_INTERVAL:
+                    last_scan = now
+                    found = find_connected_camera(CAMERA_CONFIGS)
+                    if found is not None:
+                        cfg, cap = found
+                        fps_avg = 0.0
+                        frame_idx = 0
+                        read_fails = 0
+                        print(f'[camera] connected: {cfg.name} ({cfg.device!r})', flush=True)
+                        continue
+                self._publish(make_placeholder('Connect a camera registered in config.yaml'),
+                              fps=0.0, name=None)
+                time.sleep(0.2)
+                continue
+
+            # === STREAMING: 通常処理 ===
             t0 = time.time()
-            ret, frame = self.cap.read()
+            ret, frame = cap.read()
             if not ret:
+                read_fails += 1
+                if read_fails >= self.READ_FAIL_LIMIT or not os.path.exists(cfg.device_path()):
+                    print(f'[camera] disconnected: {cfg.name}, waiting...', flush=True)
+                    cap.release()
+                    cap = None
+                    continue
                 time.sleep(0.01)
                 continue
+            read_fails = 0
 
             inp = preprocess(frame)
             out = session.run(None, {INPUT_NAME: inp})
@@ -116,25 +254,28 @@ class DepthWorker:
             dt = time.time() - t0
             inst_fps = 1.0 / max(dt, 1e-6)
             fps_avg = fps_alpha * fps_avg + (1 - fps_alpha) * inst_fps if frame_idx > 0 else inst_fps
-            cv2.putText(display, f'{fps_avg:.1f} FPS', (10, 30),
+            cv2.putText(display, f'{fps_avg:.1f} FPS  {cfg.name}', (10, 30),
                         cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 255, 0), 2)
 
             ok, jpg = cv2.imencode('.jpg', display, [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY])
             if ok:
-                with self.lock:
-                    self.latest_jpeg = jpg.tobytes()
-                    self.fps = fps_avg
-                self.frame_event.set()
+                self._publish(jpg.tobytes(), fps=fps_avg, name=cfg.name)
             frame_idx += 1
+
+        if cap is not None:
+            cap.release()
 
     def get_jpeg(self):
         with self.lock:
             return self.latest_jpeg
 
+    def get_status(self):
+        with self.lock:
+            return {'fps': round(self.fps, 2), 'camera': self.current_name}
+
     def stop(self):
         self.running = False
         self.thread.join(timeout=2)
-        self.cap.release()
 
 
 worker = DepthWorker()
@@ -207,7 +348,7 @@ def stream():
 
 @app.route('/stats')
 def stats():
-    return {'fps': round(worker.fps, 2)}
+    return worker.get_status()
 
 
 if __name__ == '__main__':

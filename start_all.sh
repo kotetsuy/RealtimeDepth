@@ -32,12 +32,27 @@ for _ in $(seq 1 60); do
     rm -f "$PID_FILE"
     exit 1
   fi
+  # /stats が 200 を返せばサーバ稼働 (MIGraphX コンパイルは Flask 起動前に完了している)。
+  # カメラ未接続でもプレースホルダ配信で稼働するため fps>0 は条件にしない。
   resp=$(curl -fs --max-time 1 "http://127.0.0.1:${PORT}/stats" 2>/dev/null || true)
-  fps=$(printf '%s' "$resp" | sed -n 's/.*"fps":\s*\([0-9.]*\).*/\1/p')
-  if [[ -n "$fps" ]] && awk -v f="$fps" 'BEGIN{exit !(f>0)}'; then
+  if [[ -n "$resp" ]]; then
+    # サーバは Flask 起動直後に /stats を返すが、DepthWorker がカメラを
+    # 開き終えるのは数百 ms 後。最初の 1 回だけで判定すると接続済みでも
+    # "no camera" と誤表示するため、数秒だけカメラ名が出るのを待つ。
+    cam=$(printf '%s' "$resp" | sed -n 's/.*"camera":\s*"\([^"]*\)".*/\1/p')
+    for _ in $(seq 1 5); do
+      [[ -n "$cam" ]] && break
+      sleep 1
+      resp=$(curl -fs --max-time 1 "http://127.0.0.1:${PORT}/stats" 2>/dev/null || true)
+      cam=$(printf '%s' "$resp" | sed -n 's/.*"camera":\s*"\([^"]*\)".*/\1/p')
+    done
     LAN_IP=$(ip route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="src"){print $(i+1); exit}}')
     URL="http://localhost:${PORT}/"
-    echo "ready. open ${URL} or http://${LAN_IP:-<host-ip>}:${PORT}/"
+    if [[ -n "$cam" ]]; then
+      echo "ready (camera: ${cam}). open ${URL} or http://${LAN_IP:-<host-ip>}:${PORT}/"
+    else
+      echo "ready (no camera connected; serving placeholder). open ${URL} or http://${LAN_IP:-<host-ip>}:${PORT}/"
+    fi
 
     if [[ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]] && command -v google-chrome >/dev/null 2>&1; then
       echo "launching Chrome..."

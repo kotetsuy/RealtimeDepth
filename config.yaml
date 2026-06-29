@@ -1,14 +1,23 @@
 camera:
+  # 上から順に優先。接続されているものが起動時に自動選択される。
+  # 複数同時に刺さっている場合はリスト先頭に近いものだけが配信される。
+  #
   # device: 整数 (V4L2 index) または文字列 (デバイスパス) を受け付ける。
   # USB ポートが変わるとインデックスが変動するので、固定 ID パスの利用を推奨。
-  # 候補:
-  #   /dev/v4l/by-id/usb-DC474C08_P050301_SN0002_2K_USB_Camera_DC474C08_P050301_SN0002-video-index0
-  #   /dev/video0
-  #   0
-  device: /dev/v4l/by-id/usb-DC474C08_P050301_SN0002_2K_USB_Camera_DC474C08_P050301_SN0002-video-index0
-  width: 640
-  height: 480
-  fps: 30
+  #   /dev/v4l/by-id/usb-..-video-index0
+  devices:
+    - name: 2K USB Camera
+      device: /dev/v4l/by-id/usb-DC474C08_P050301_SN0002_2K_USB_Camera_DC474C08_P050301_SN0002-video-index0
+    - name: Jieli Camera
+      device: /dev/v4l/by-id/usb-Jieli_Technology_USB_PHY_2.0-video-index0
+    - name: ELECOM 2MP Webcam
+      device: /dev/v4l/by-id/usb-Alcor_Micro__Corp._ELECOM_2MP_Webcam-video-index0
+
+  # devices 内で width/height/fps が省略されたときの既定値。
+  defaults:
+    width: 640
+    height: 480
+    fps: 30
 
 model:
   path: depth_anything_v2_vits_518.onnx
