@@ -158,6 +158,7 @@ activemq-data/
 .env
 .envrc
 .venv
+.venv-torch/
 env/
 venv/
 ENV/

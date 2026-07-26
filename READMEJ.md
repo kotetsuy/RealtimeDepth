@@ -1,12 +1,18 @@
 # RealtimeDepth — リアルタイム深度推定デモ (セットアップ手順書)
 
 Depth Anything V2 Small を AMD Ryzen AI MAX+ 395 (gfx1151 / Strix Halo) 上で
-ROCm + MIGraphX で動かし、USB カメラ映像を Chrome に MJPEG ストリーミング
+**PyTorch (ROCm)** で動かし、USB カメラ映像を Chrome に MJPEG ストリーミング
 するデモです。
 
 このドキュメントは **`git clone` から `./start_all.sh` でブラウザ表示が
 始まるところまで** の手順書です。技術的な内容は [TECHNICALJ.md](./TECHNICALJ.md)
 を参照してください。
+
+> **注意 (2026-07)**: 以前は ONNX Runtime + MIGraphX で推論していましたが、
+> この経路は廃止しました。ROCm 7.14 / gfx1151 向けの MIGraphX が存在せず、
+> 一方 PyTorch の ROCm wheel は自前の ROCm ランタイムを同梱するため
+> `/opt/rocm` のバージョンに依存しないためです。詳細は
+> [TECHNICALJ.md §2](./TECHNICALJ.md) を参照。
 
 ---
 
@@ -15,14 +21,16 @@ ROCm + MIGraphX で動かし、USB カメラ映像を Chrome に MJPEG ストリ
 | 項目 | バージョン / 状態 |
 | --- | --- |
 | マシン | GMKtec NucBox EVO X2 等 (Ryzen AI MAX+ 395, gfx1151) |
-| OS | Ubuntu 24.04 |
-| ROCm | 7.2.x がインストール済み (`/opt/rocm` から参照可能) |
-| Python | 3.10 (Ubuntu 24.04 標準は 3.12 なので別途インストール) |
+| OS | Ubuntu 26.04 (24.04 でも可) |
+| GPU ドライバ | ディストロカーネルの in-tree `amdgpu`/KFD だけでよい |
+| ROCm | **システムへのインストールは不要**。PyTorch wheel が自前のランタイムを同梱する |
+| Python | 3.14 (Ubuntu 26.04 標準)。3.12 / 3.13 の wheel もある |
 | USB カメラ | V4L2 で認識される単眼カメラ (`/dev/video0` 等) |
 | ブラウザ | Google Chrome (NucBox 本体 or LAN 内別マシン) |
 
-**ROCm 7.2.x が `/opt/rocm` 配下にインストールされていること**, および
-**カメラが `ls /dev/video*` で見えること**が前提です。
+**GPU がカーネルから見えていること** (`ls /dev/kfd /dev/dri` が通る) と
+**カメラが `ls /dev/video*` で見えること**が前提です。システム全体の
+`/opt/rocm` があっても構いませんが、本プロジェクトは使いません。
 
 ---
 
@@ -39,49 +47,76 @@ cd RealtimeDepth
 
 ---
 
-## 2. Python 3.10 を入れる
+## 2. Python の確認
 
-Ubuntu 24.04 の標準は Python 3.12 です。本プロジェクトは
-onnxruntime-migraphx の cp310 wheel を使う都合で **3.10 が必須** です。
+Ubuntu 26.04 の標準は Python 3.14 で、本プロジェクトもこれを使います。
+gfx1151 の wheel は **cp312 / cp313 / cp314** 向けが存在します。この範囲なら
+どれでも構いませんが、**cp310 の wheel は存在しない**ので 3.10 では動きません。
 
 ```bash
-sudo add-apt-repository -y ppa:deadsnakes/ppa
-sudo apt update
-sudo apt install -y python3.10 python3.10-venv python3.10-dev
-python3.10 --version    # 3.10.x が出ること
+python3.14 --version    # 3.14.x が出ること
 ```
 
 ---
 
 ## 3. venv と Python 依存パッケージ
 
-```bash
-python3.10 -m venv .venv
-source .venv/bin/activate
-pip install --upgrade pip wheel setuptools
+最重要なのは **wheel の入手元** です。必ず AMD の gfx1151 専用 index を使います:
 
-# PyTorch (ONNX エクスポート用なので CPU 版で OK)
-pip install --index-url https://download.pytorch.org/whl/cpu torch torchvision
-
-# ONNX 変換 + ROCm 7.2.1 向け onnxruntime
-pip install onnx onnxscript
-pip install -f https://repo.radeon.com/rocm/manylinux/rocm-rel-7.2.1/ onnxruntime-migraphx
-
-# 画像処理 / Web サーバー / その他
-pip install opencv-python flask pyyaml huggingface_hub
+```
+https://repo.amd.com/rocm/whl/gfx1151/
 ```
 
-確認:
+`download.pytorch.org` の ROCm index は使わないでください。あちらは
+マルチアーキの kpack ビルドで、gfx1151 では実行時に
+`hipErrorInvalidImage` / `kpack_load_code_object failed with error: 13`
+になります。
 
 ```bash
-python -c "import onnxruntime as ort; print(ort.get_available_providers())"
-# → ['MIGraphXExecutionProvider', 'CPUExecutionProvider'] が出れば OK
+# ここでは uv を使用。python3.14 -m venv + pip でも構いません。
+uv venv --python 3.14 .venv-torch
+
+VIRTUAL_ENV=$PWD/.venv-torch uv pip install \
+  --index-url https://repo.amd.com/rocm/whl/gfx1151/ \
+  --extra-index-url https://pypi.org/simple \
+  --index-strategy unsafe-best-match --prerelease allow \
+  torch==2.9.1+rocm7.13.0 torchvision==0.24.0+rocm7.13.0
+
+VIRTUAL_ENV=$PWD/.venv-torch uv pip install flask opencv-python pyyaml
 ```
 
-> **注意**: `onnxruntime-rocm` (PyPI 版) は ROCm 6.x ビルドのため ROCm 7.x
-> では動きません。必ず上記の AMD 公式リポジトリから
-> `onnxruntime-migraphx` を入れてください。詳細は
-> [TECHNICALJ.md](./TECHNICALJ.md) の該当節を参照。
+> **torch と torchvision はバージョン組で固定すること。** index には
+> torchvision 0.24.0 / 0.25.0 / 0.26.0 が並んでいますが、torch 2.9.1 に
+> 対応するのは **0.24.0** だけです。ズレると import 時に
+> `RuntimeError: operator torchvision::nms does not exist` で落ちます。
+>
+> | torch | torchvision |
+> | --- | --- |
+> | 2.9.1 | 0.24.0 |
+> | 2.10.0 | 0.25.0 |
+> | 2.11.0 | 0.26.0 |
+>
+> torchvision は省略できません。`depth_anything_v2/dpt.py` が
+> `from torchvision.transforms import Compose` を import しています。
+
+GPU 認識の確認:
+
+```bash
+.venv-torch/bin/python -c "
+import torch
+print(torch.cuda.is_available())
+print(torch.cuda.get_device_properties(0).gcnArchName)"
+# → True / gfx1151 が出れば OK
+```
+
+> **`HSA_OVERRIDE_GFX_VERSION` は設定しないこと。** この wheel は gfx1151
+> ネイティブビルドなので、アーキを override すると壊れます。シェルの
+> プロファイルで export されている場合に備え、`start_all.sh` は明示的に
+> `unset` しています。
+
+torch を入れると依存として `rocm-sdk-libraries-gfx1151` (wheel 専用の ROCm
+ランタイム) も入ります。システムの `/opt/rocm` のバージョンが無関係なのは
+このためです。
 
 ---
 
@@ -108,50 +143,32 @@ ls -l ~/RealtimeDepth/Depth-Anything-V2
 
 ---
 
-## 5. ONNX エクスポート
+## 5. config.yaml のモデル設定を確認
 
-`~/Depth-Anything-V2/export_onnx.py` を以下の内容で作成:
+**ONNX エクスポートの手順はありません。** `app.py` が symlink 経由で公式の
+`depth_anything_v2` パッケージを直接 import し、`.pth` チェックポイントを
+読み込みます。既定値は手順 4 でダウンロードしたものと一致しているはずです:
 
-```python
-import torch
-from depth_anything_v2.dpt import DepthAnythingV2
+```yaml
+model:
+  repo: Depth-Anything-V2                # 手順 4 の symlink
+  encoder: vits                          # vits / vitb / vitl / vitg
+  checkpoint: Depth-Anything-V2/checkpoints/depth_anything_v2_vits.pth
+  input_size: 518                        # 14 の倍数であること
 
-model_configs = {
-    'vits': {'encoder': 'vits', 'features': 64,
-             'out_channels': [48, 96, 192, 384]},
-}
-
-encoder = 'vits'
-model = DepthAnythingV2(**model_configs[encoder])
-model.load_state_dict(torch.load(
-    f'checkpoints/depth_anything_v2_{encoder}.pth', map_location='cpu'))
-model.eval()
-
-INPUT_SIZE = 518
-dummy_input = torch.randn(1, 3, INPUT_SIZE, INPUT_SIZE)
-
-torch.onnx.export(
-    model, dummy_input,
-    f'../RealtimeDepth/depth_anything_v2_vits_{INPUT_SIZE}.onnx',
-    input_names=['input'], output_names=['depth'],
-    opset_version=17,
-    dynamic_axes={'input': {0: 'batch'}, 'depth': {0: 'batch'}},
-    dynamo=False,    # ← MIGraphX が opset 18 の Resize 属性を未対応のため必須
-)
+runtime:
+  device: cuda        # ROCm の HIP 層が CUDA API を受けるので gfx1151 でも "cuda" が正しい
+  precision: fp16     # fp16 / fp32
+  compile: false      # torch.compile。下記参照
 ```
 
-実行:
+パスは `config.yaml` からの相対で解決されます。より大きな encoder を使う
+場合は `encoder` と `checkpoint` の **両方** を変更し、対応する `.pth` を
+ダウンロードしてください。
 
-```bash
-cd ~/Depth-Anything-V2
-source ~/RealtimeDepth/.venv/bin/activate
-python export_onnx.py
-ls -lh ~/RealtimeDepth/depth_anything_v2_vits_518.onnx   # ~95 MB
-```
-
-> `dynamo=False` を入れずに export すると MIGraphX が Resize op の
-> `keep_aspect_ratio_policy` 属性を解釈できず実行時に落ちます。詳細は
-> [TECHNICALJ.md](./TECHNICALJ.md) を参照。
+`compile: true` にすると `torch.compile(mode="reduce-overhead")` が有効に
+なります。起動のたびに 1〜2 分のコンパイルが走る一方、既定設定
+(fp16 vits) では既に約 77 FPS 出ているため不要と判断し、既定は off です。
 
 ---
 
@@ -230,19 +247,25 @@ cd ~/RealtimeDepth
 
 実行されること:
 
-1. venv activation + `HSA_OVERRIDE_GFX_VERSION=11.5.1` を内部設定
+1. `.venv-torch` を activate し、`HSA_OVERRIDE_GFX_VERSION` を `unset`
 2. `app.py` をバックグラウンド起動 (PID は `.depth_app.pid` に保存)
-3. 初回は MIGraphX のコンパイル待ち (~110 秒)、2回目以降は ~3 秒
+3. モデルロード + GPU ウォームアップ待ち (約 7 秒。`runtime.compile` が
+   有効なら 1〜2 分)
 4. 起動完了後、Chrome を新規ウィンドウで `http://localhost:8000/` に開く
 
 期待出力:
 
 ```
 started (pid 12345), log: /home/test/RealtimeDepth/depth_app.log
-waiting for ready (cold start ~110s, cached ~3s)...
+waiting for ready (model load + warmup ~10s; torch.compile 有効時は 1〜2 分)...
 ready (camera: 2K USB Camera). open http://localhost:8000/ or http://172.23.0.7:8000/
 launching Chrome...
 ```
+
+なお起動のたびに以下の無害な警告がログに出ますが、動作に影響はありません:
+`xFormers not available` (DINOv2 の optional import)、
+`xnack 'Off' was requested for a processor that does not support it`、
+MIOpen の `gfx1151_20.HIP.fdb.txt` が読めないという警告。
 
 登録済みカメラが1台も接続されていない場合もアプリは起動し、メッセージは
 `ready (no camera connected; serving placeholder)` になります。カメラを
@@ -285,10 +308,11 @@ Mac の Chrome から `http://<NucBoxのIP>:8000/` でアクセス。
 
 | 症状 | 確認・対処 |
 | --- | --- |
-| `ROCMExecutionProvider` が出ない | 想定通り。本プロジェクトは `MIGraphXExecutionProvider` を使います |
-| MIGraphX のコンパイルが毎回走る | `config.yaml` の `runtime.compile_cache_dir` が書き込み可能か確認 |
+| `hipErrorInvalidImage` / `kpack_load_code_object failed with error: 13` | wheel を `repo.amd.com/rocm/whl/gfx1151/` ではなく `download.pytorch.org` から入れている。手順 3 で入れ直す |
+| `RuntimeError: operator torchvision::nms does not exist` | torch と torchvision のバージョン不一致。組で固定する (torch 2.9.1 ↔ torchvision 0.24.0) |
+| `torch.cuda.is_available()` が `False` | `ls /dev/kfd /dev/dri` の確認と、ユーザーが `render` / `video` グループに入っているか確認。`HSA_OVERRIDE_GFX_VERSION` が export されて**いない**ことも確認 |
 | 「NO CAMERA」プレースホルダから変わらない | 登録済みカメラが未接続。`ls /dev/v4l/by-id/` で `camera.devices` のいずれかに一致するパスがあるか、別アプリが占有していないか確認 |
 | Chrome が自動起動しない | `DISPLAY` / `WAYLAND_DISPLAY` 不在 (SSH 等)。表示された URL を手動で開く |
-| FPS が出ない | `./stop_all.sh && rm -rf .migraphx_cache && ./start_all.sh` でキャッシュ再生成、`rocm-smi` で GPU 使用率確認 |
+| FPS が出ない | `.venv-torch/bin/python test_inference.py` で推論単体を切り分ける (fp16 vits 518² で約 12 ms / 78 FPS が目安)。`rocm-smi` で GPU 使用率を確認し、`runtime.precision` が `fp32` になっていないか確認 |
 
 より詳細なトラブルシュートは [TECHNICALJ.md](./TECHNICALJ.md) を参照。

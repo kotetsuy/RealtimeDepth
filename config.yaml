@@ -20,7 +20,12 @@ camera:
     fps: 30
 
 model:
-  path: depth_anything_v2_vits_518.onnx
+  # PyTorch (ROCm) で直接推論する。ONNX/MIGraphX 経路は廃止。
+  # repo: Depth Anything V2 公式リポジトリ (depth_anything_v2 パッケージを import する)
+  repo: Depth-Anything-V2
+  encoder: vits           # vits / vitb / vitl / vitg
+  checkpoint: Depth-Anything-V2/checkpoints/depth_anything_v2_vits.pth
+  # DPT ヘッドの制約で 14 の倍数であること (518 = 14 x 37)。
   input_size: 518
 
 server:
@@ -29,7 +34,8 @@ server:
   jpeg_quality: 80
 
 runtime:
-  # MIGraphX のコンパイル結果をキャッシュ。同じ ONNX + 同じ GPU/ROCm の組み合わせなら
-  # 2回目以降は ~110s のコンパイルをスキップして数秒で起動できる。
-  # ONNX を作り直したら中身を消してよい (再生成される)。
-  compile_cache_dir: .migraphx_cache
+  device: cuda            # ROCm の HIP 層が CUDA API を受けるので gfx1151 でも "cuda"
+  precision: fp16         # fp16 / fp32
+  # torch.compile による最適化。初回コンパイルに 1〜2 分かかるが数割速くなる。
+  # まず false (eager) で FPS を測り、不足する場合のみ true にする。
+  compile: false

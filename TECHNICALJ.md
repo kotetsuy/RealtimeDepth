@@ -26,90 +26,180 @@ Flask の `/stream` エンドポイントは `multipart/x-mixed-replace` で
 | 層 | 採用技術 | 役割 |
 | --- | --- | --- |
 | カメラ I/O | OpenCV (V4L2 backend) | フレーム取得 |
-| 推論 | ONNX Runtime 1.24 / MIGraphX EP | 単眼深度推定 |
-| GPU runtime | ROCm 7.2.1 (gfx1151) | カーネル実行 |
+| 推論 | PyTorch 2.9.1 (ROCm 7.13 wheel) | 単眼深度推定 |
+| GPU runtime | wheel 同梱の ROCm (`rocm-sdk-libraries-gfx1151`) | カーネル実行 |
 | モデル | Depth Anything V2 Small (vits) | 約 24.8M params |
 | 配信 | Flask + multipart/x-mixed-replace | MJPEG ストリーミング |
 
 ---
 
-## 2. なぜ MIGraphX なのか — ROCm 7 における ONNX Runtime 事情
+## 2. なぜ PyTorch 直接推論なのか — ONNX/MIGraphX からの移行 (2026-07)
 
-ROCm **7.1 以降は `ROCMExecutionProvider` が公式に廃止** され、AMD は
-`MIGraphXExecutionProvider` への一本化を推進しています。PyPI で配布されて
-いる `onnxruntime-rocm` は ROCm 6.x ビルドのため、ROCm 7.x では
-`libhipblas.so.2` 等が見つからずプロバイダーのロード自体に失敗します
-(ldd で確認可能)。
+当初は ONNX Runtime + MIGraphX EP で推論していました。これを捨てて
+PyTorch ネイティブ推論に移行しています。
 
-採用構成:
+### 移行の直接的なきっかけ
 
-```
-パッケージ : onnxruntime-migraphx (cp310 wheel)
-配布元     : https://repo.radeon.com/rocm/manylinux/rocm-rel-7.2.1/
-インストール: pip install -f <上記URL> onnxruntime-migraphx
-provider   : ('MIGraphXExecutionProvider', {'device_id': 0, ...})
-```
+OS を Ubuntu 26.04 / ROCm 7.14 に上げた時点で、GPU 推論が復旧不能になりました。
 
-`pip install` には `--index-url` ではなく `-f` (find-links) を使います。
-リポジトリは PEP 503 simple index ではなく単なるディレクトリ一覧のためです。
+1. **exec-stack**: venv の `onnxruntime_pybind11_state.so` が `GNU_STACK=RWE`
+   (実行可能スタック) を要求し、26.04 のカーネルが import 時に拒否する。
+   ELF の PF_X ビットを落とせば回避できるが、これで動くのは CPU 実行のみ。
+2. **MIGraphX が存在しない**: gfx1151 / ROCm 7.14 向けの MIGraphX は AMD の
+   どのチャネルにも配布されていません (`whl/gfx1151`・nightlies・
+   `packages-multi-arch` を全確認済み)。唯一入手できる 7.2.1 汎用 deb は
+   soname こそ 7.14 のライブラリで解決できるものの、**GPU カーネルの実行時
+   JIT が 7.14 の clang/HIP ヘッダで失敗**します (`__hmax` の ambiguous、
+   LLVM23 の `[[clang::lifetimebound]]` による -Werror、最終的に
+   `std::bad_alloc`)。`-Wno-error` では回避できない本物のソース非互換です。
+
+MIGraphX は GPU カーネルを **実行時にシステムの comgr/clang で JIT する**ため、
+migraphx のバージョンと ROCm ツールチェインの版が揃っていないと動きません。
+リンク ABI が一致しているだけでは不十分、というのがここでの教訓です。
+
+### PyTorch を選んだ理由
+
+- **DAv2 はもともと純 PyTorch モデル** (DINOv2 + DPT ヘッド)。ONNX という
+  中間層自体が不要で、後述の Resize op 非互換のような罠も同時に消える。
+- **システム ROCm からの構造的デカップリング**。PyTorch の ROCm wheel は
+  依存として `rocm-sdk-libraries-gfx1151` を引き込み、**自前の ROCm ランタイムを
+  同梱**します。動いていればよいのはカーネルドライバ (KFD/amdgpu、26.04 では
+  in-tree で十分新しい) だけです。「ROCm 7.14 に MIGraphX が無い」問題は、
+  onnxruntime-migraphx がシステム ROCm に密結合していたことが根本原因でした。
+- **速い**。実測で ONNX Runtime の CPU フォールバック (約 10 FPS) の 8 倍近く
+  出ています ([§8](#8-パフォーマンス)) 。
+
+### 旧経路の遺産
+
+いずれも削除済みです (2026-07): `.venv` (Python 3.10 +
+onnxruntime-migraphx、CPU 実行のみ)、`depth_anything_v2_vits_518.onnx`、
+`.migraphx_cache/` の `.mxr` — 合計約 2.2 GB。現行コードからの参照は
+ゼロでした。
+
+MIGraphX のソースビルドはリポジトリ外に、依存ライブラリのビルドまで完了した
+状態で凍結してあります (`~/AMDMIGraphX`、詳細は `PROGRESS.md`)。推論単体で
+77 FPS 出ている以上、戻る動機はありません。ONNX が再び必要になった場合は
+`.pth` から export し直してください。
 
 ---
 
-## 3. ONNX エクスポートの落とし穴 — `dynamo=False` 必須
+## 3. wheel 入手先の落とし穴
 
-PyTorch 2.9+ の `torch.onnx.export()` はデフォルトで dynamo (新 exporter)
-を使います。これは内部的に opset 18 で書き出し、`Resize` 演算子に
-`keep_aspect_ratio_policy` という新しい属性を付けます。
+PyTorch 経路の失敗のほぼ全てが、この 3 点のどれかです。
 
-**MIGraphX 1.24.x はこの属性を未サポート**で、実行時に以下のエラーで落ちます:
+### 3-1. gfx1151 専用 index を使うこと
 
 ```
-PARSE_RESIZE: keep_aspect_ratio_policy is not supported!
-[E:onnxruntime] Failed to call function
+https://repo.amd.com/rocm/whl/gfx1151/     ← これ
+https://download.pytorch.org/whl/rocm...   ← 使わない
 ```
 
-回避策: レガシー (TorchScript ベース) の exporter を明示的に使います。
+pytorch.org の ROCm wheel はマルチアーキの kpack ビルドで、gfx1151 では
+バンドルされた code object をロードできず実行時に落ちます:
 
-```python
-torch.onnx.export(
-    ..., opset_version=17, dynamo=False,
-)
+```
+hipErrorInvalidImage
+kpack_load_code_object failed with error: 13
 ```
 
-これで Resize は opset 17 までの形式で書き出され、属性に
-`keep_aspect_ratio_policy` は付かないため MIGraphX が正常にパースします。
+インストール例は [READMEJ.md §3](./READMEJ.md) を参照。
+
+### 3-2. torch と torchvision はバージョン組で固定すること
+
+index には torchvision 0.24.0 / 0.25.0 / 0.26.0 が横並びで置かれており、
+バージョン指定を省くと最新が入って torch と食い違います。その場合
+import 時にこう落ちます:
+
+```
+RuntimeError: operator torchvision::nms does not exist
+```
+
+torchvision の C++ 拡張が別バージョンの libtorch に対してビルドされており、
+カスタム op の登録が済まないまま `register_fake` が走るためです。
+
+| torch | torchvision |
+| --- | --- |
+| 2.9.1 | 0.24.0 |
+| 2.10.0 | 0.25.0 |
+| 2.11.0 | 0.26.0 |
+
+torchvision は省略できません。`depth_anything_v2/dpt.py` が
+`from torchvision.transforms import Compose` を import しています
+(実際に使うのは公式の `infer_image()` 経路だけですが、import は無条件に走ります)。
+
+### 3-3. `HSA_OVERRIDE_GFX_VERSION` を設定しないこと
+
+`repo.amd.com/rocm/whl/gfx1151/` の wheel は gfx1151 ネイティブビルドです。
+gfx1100 等に見せかける override は不要どころか有害なので、`start_all.sh` は
+シェルプロファイル由来の値に備えて明示的に `unset` しています。
+
+> 旧 MIGraphX 経路では `HSA_OVERRIDE_GFX_VERSION=11.5.1` が必要でした。
+> 古い手順書をコピーしてこれを export すると壊れます。
+
+### 3-4. Python バージョン
+
+gfx1151 の wheel は **cp312 / cp313 / cp314** のみです。旧 `.venv` は
+Python 3.10 (onnxruntime-migraphx の cp310 wheel に合わせたもの) なので
+再利用できず、`.venv-torch` を新規に作っています。
 
 ---
 
-## 4. MIGraphX コンパイルキャッシュ
+## 4. モデルのロードとウォームアップ
 
 ![startup sequence](./docs/startup_sequence.svg)
 
-MIGraphX は最初の `session.run()` で **AOT コンパイル** を行い、gfx1151 用の
-HIP カーネルを生成します。Depth Anything V2 Small + 518² で **約 110 秒** か
-かります。これを毎回行うと開発の反復が極端に遅くなるため、
-`migraphx_model_cache_dir` プロバイダーオプションでコンパイル成果物
-(`.mxr` ファイル、約 753 MB) を保存・再利用します。
+`app.py` は起動時に公式リポジトリの `depth_anything_v2` パッケージを
+`sys.path` 経由で import し、encoder に応じた DPT ヘッド構成でモデルを
+組み立てて `.pth` を読み込みます。
 
 ```python
-opts = {'device_id': 0,
-        'migraphx_model_cache_dir': '/abs/path/.migraphx_cache'}
-session = ort.InferenceSession(
-    MODEL_PATH,
-    providers=[('MIGraphXExecutionProvider', opts), 'CPUExecutionProvider'],
-)
+sys.path.insert(0, DAV2_REPO)            # config の model.repo (symlink)
+from depth_anything_v2.dpt import DepthAnythingV2
+
+ENCODER_CONFIGS = {                      # 公式 app.py の model_configs と同一
+    'vits': {'features': 64,  'out_channels': [48, 96, 192, 384]},
+    'vitb': {'features': 128, 'out_channels': [96, 192, 384, 768]},
+    'vitl': {'features': 256, 'out_channels': [256, 512, 1024, 1024]},
+    'vitg': {'features': 384, 'out_channels': [1536, 1536, 1536, 1536]},
+}
+model = DepthAnythingV2(encoder=ENCODER, **ENCODER_CONFIGS[ENCODER])
+model.load_state_dict(torch.load(CHECKPOINT, map_location='cpu'))
+model = model.to(device=DEVICE, dtype=DTYPE).eval()
 ```
 
-実測値:
+`input_size` は **14 の倍数**でなければなりません。DPT ヘッドが入力を
+14×14 のパッチに分割するためで、既定の 518 は `14 × 37` です。不正値は
+起動時に `ValueError` で弾きます。
+
+### ウォームアップ
+
+初回の `forward()` では HIP カーネルの JIT、MIOpen の畳み込みアルゴリズム
+選択、アロケータのプール確保が同時に走り、数秒かかります。これを Flask 起動
+**前**に済ませておかないと、最初の数フレームだけ極端に遅い FPS が表示されます。
+
+```python
+def warmup():
+    dummy = np.zeros((INPUT_SIZE, INPUT_SIZE, 3), dtype=np.uint8)
+    for _ in range(3):
+        infer(dummy)
+    torch.cuda.synchronize()
+```
 
 | ケース | 起動時間 (app.py 開始 → /stats が応答) |
 | --- | --- |
-| コールド (`.mxr` 無し) | ~117 秒 (内 ~110 秒は MIGraphX コンパイル) |
-| ウォーム (`.mxr` ヒット) | ~3 秒 |
+| 既定 (eager, fp16) | 約 7 秒 (うちウォームアップ約 7 秒) |
+| `runtime.compile: true` | 1〜2 分 (torch.compile のコンパイル) |
 
-キャッシュキーは ONNX のハッシュ + ORT バージョン + GPU アーキ等で決まる
-ので、ONNX を作り直したり ROCm を更新した場合は `.migraphx_cache/` を
-削除すれば自動的に再生成されます。
+旧 MIGraphX 経路の ~110 秒の AOT コンパイルと 753 MB の `.mxr` キャッシュは
+不要になりました。`.migraphx_cache/` は削除済みです。
+
+### torch.compile
+
+`runtime.compile: true` で `torch.compile(model, mode="reduce-overhead")` を
+有効にできます。既定は off です — fp16 eager で既に 77 FPS 出ており、
+ボトルネックはカメラの 30fps 側にあるため、起動のたびに 1〜2 分払う価値が
+ありません。より大きな encoder や高解像度に切り替えたときの選択肢として
+残してあります。
 
 ---
 
@@ -120,7 +210,8 @@ session = ort.InferenceSession(
 ### 役割分担
 
 - **`DepthWorker` スレッド**: ループでカメラから 1 フレーム取り、推論し、
-  JPEG エンコードし、`latest_jpeg` に書き込む。1 周あたり ~40 ms (25 FPS)。
+  JPEG エンコードし、`latest_jpeg` に書き込む。1 周あたり ~38 ms (26 FPS)。
+  推論自体は ~13 ms なので、この周期はカメラの 30fps に律速されています。
 - **Flask /stream リクエストスレッド**: クライアント (Chrome) ごとに 1 本生成。
   `frame_event.wait()` で Worker からの通知を待ち、最新 JPEG を 1 個ずつ
   multipart 境界で送信する。
@@ -183,15 +274,34 @@ self.current_name = None   # 配信中のカメラ名 (未接続時 None)
 ### 前処理 (`preprocess`)
 
 Depth Anything V2 (DINOv2 バックボーン) は ImageNet 統計値で正規化した
-RGB を期待します。
+RGB を期待します。リサイズまでは CPU (OpenCV) で行い、**正規化は GPU 側**で
+やります。
 
 ```python
 rgb     = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
-resized = cv2.resize(rgb, (518, 518), cv2.INTER_CUBIC)
-normalized = (resized.astype(np.float32) / 255.0 - MEAN) / STD
-return np.transpose(normalized, (2, 0, 1))[None, ...]
-# MEAN = [0.485, 0.456, 0.406], STD = [0.229, 0.224, 0.225]
+resized = cv2.resize(rgb, (518, 518), interpolation=cv2.INTER_CUBIC)
+t = torch.from_numpy(np.ascontiguousarray(resized)).to(DEVICE)   # uint8 HWC のまま転送
+t = t.permute(2, 0, 1).unsqueeze(0).to(DTYPE).div_(255.0)        # GPU 上で CHW / fp16 化
+return (t - MEAN) / STD
+# MEAN = [0.485, 0.456, 0.406], STD = [0.229, 0.224, 0.225] (fp16, shape (1,3,1,1))
 ```
+
+CPU 側で float32 に展開してから転送すると 518×518×3×4 = 約 3.2 MB に
+なりますが、uint8 のまま送れば 1/4 の約 0.8 MB で済みます。正規化そのものは
+GPU では実質ゼロコストです。
+
+### 推論 (`infer`)
+
+```python
+@torch.inference_mode()
+def infer(bgr):
+    depth = model(preprocess(bgr))   # forward は (B, H, W) を返す
+    return depth[0].float().cpu().numpy()
+```
+
+`DepthAnythingV2.forward()` は末尾で `squeeze(1)` するため、出力はチャネル
+次元のない `(B, H, W)` です (ONNX 経路の `out[0][0]` と同じものを指します)。
+fp16 で推論しているので、`depth_to_colormap` に渡す前に `.float()` します。
 
 ### 後処理 (`depth_to_colormap`)
 
@@ -223,8 +333,10 @@ camera:
     fps: 30
 
 model:
-  path: depth_anything_v2_vits_518.onnx
-  input_size: 518        # ONNX export 時と一致させる
+  repo: Depth-Anything-V2   # 公式リポジトリ (symlink 可)。sys.path に追加される
+  encoder: vits             # vits / vitb / vitl / vitg
+  checkpoint: Depth-Anything-V2/checkpoints/depth_anything_v2_vits.pth
+  input_size: 518           # 14 の倍数であること (518 = 14 x 37)
 
 server:
   host: 0.0.0.0          # LAN 公開しないなら 127.0.0.1
@@ -232,8 +344,15 @@ server:
   jpeg_quality: 80       # 60-90 の範囲が実用的
 
 runtime:
-  compile_cache_dir: .migraphx_cache  # null にするとキャッシュ無効化
+  device: cuda           # ROCm の HIP 層が CUDA API を受ける。CPU 実行なら "cpu"
+  precision: fp16        # fp16 / fp32
+  compile: false         # torch.compile(mode="reduce-overhead")
 ```
+
+`model.repo` / `model.checkpoint` は `config.yaml` からの相対パスとして
+解決されます。encoder を変える場合は `encoder` と `checkpoint` の両方を
+揃えてください (組み合わせが食い違うと `load_state_dict` が shape mismatch で
+落ちます)。
 
 旧形式の単一指定 (トップレベルの `camera.device`/`width`/`height`/`fps`)
 もそのまま受け付け、内部で 1 要素の `devices` リストに正規化するので、
@@ -284,17 +403,36 @@ runtime:
 
 ---
 
-## 8. パフォーマンス調整
+## 8. パフォーマンス
+
+### 実測値 (Radeon 8060S / gfx1151 / vits / 518² / fp16)
+
+| 項目 | 値 |
+| --- | --- |
+| 推論単体 (`test_inference.py`) | **12.5 ms / frame (79.9 FPS)** |
+| アプリ全体 (取得+推論+カラーマップ+JPEG) | **26 FPS** |
+| 起動時間 (モデルロード + ウォームアップ) | 約 7 秒 |
+| 参考: 旧 ONNX Runtime **CPU** フォールバック | 約 10 FPS |
+
+**現在のボトルネックはカメラ側**です。推論に 13 ms しかかからないのに対し、
+カメラは 30fps (33 ms/frame) でしか出さないため、パイプライン全体は
+カメラの供給レートに張り付いています。推論を速くしても表示 FPS は
+上がりません。
+
+### 調整の効き方
 
 | 操作 | 効果 |
 | --- | --- |
-| `INPUT_SIZE` を 518 → 392 → 308 に下げる | 推論時間短縮 (要 ONNX 再 export) |
-| `JPEG_QUALITY` を 80 → 60 に | LAN 帯域削減、デコード時間軽減 |
-| FP16 化 (`onnxconverter_common.float16`) | 推論短縮 (要再キャッシュ) |
-| 表示画像を `cv2.resize` で縮小 | エンコード時間短縮 |
+| `camera.devices[].fps` を上げる (カメラが対応していれば) | **表示 FPS が上がる唯一の手段** |
+| `runtime.precision` を `fp16` → `fp32` | 推論が約 2 倍遅くなる。精度差はこの用途では体感できない |
+| `model.encoder` を `vits` → `vitb` / `vitl` | 精度向上と引き換えに推論時間増。vits で余裕があるので選択肢になる |
+| `model.input_size` を 518 → 392 → 280 に下げる | 推論時間短縮 (14 の倍数のこと)。再エクスポート不要 |
+| `runtime.compile: true` | eager 比で数割高速化。起動に 1〜2 分上乗せ |
+| `server.jpeg_quality` を 80 → 60 に | LAN 帯域削減、デコード時間軽減 |
 
-なおこのプロジェクトの実測ボトルネックは **推論 ~30 ms / frame**。
-カメラ I/O と JPEG エンコードは合計でも 5 ms 未満です。
+ONNX 経路では入力サイズや精度を変えるたびに再 export + 再コンパイル
+(~110 秒) が必要でしたが、PyTorch 直では `config.yaml` を書き換えて
+再起動するだけです。
 
 ---
 
@@ -302,14 +440,14 @@ runtime:
 
 ```
 1. .depth_app.pid を確認 (多重起動防止)
-2. .venv を activate, HSA_OVERRIDE_GFX_VERSION=11.5.1 を export
+2. .venv-torch を activate, HSA_OVERRIDE_GFX_VERSION を unset
 3. config.yaml から PORT を読む (yaml.safe_load via venv の python)
 4. nohup python app.py > depth_app.log 2>&1 &
 5. /stats を 3 秒間隔で curl し、HTTP 200 が返るまで最長 180 秒待つ
    - 判定基準は「fps > 0」ではなく「サーバー稼働」なので、カメラ未接続でも
-     成功する (Worker はプレースホルダを配信)。Flask は MIGraphX コンパイル
-     完了後にしか起動しないため、200 が返れば既にコンパイル済み
-   - コールド時はこの間に MIGraphX が ~110 秒コンパイル
+     成功する (Worker はプレースホルダを配信)。Flask はモデルロードと
+     ウォームアップの完了後にしか起動しないため、200 が返れば推論は準備済み
+   - 既定 (eager) ではこの間は約 7 秒。torch.compile 有効時は 1〜2 分
    - 「ready」行には選択中のカメラ名を表示 (未接続時はプレースホルダ配信中
      である旨を表示)
    - 失敗時はログ末尾を出して exit 1
@@ -324,31 +462,55 @@ runtime:
 
 ## 10. トラブルシューティング (詳細)
 
-### `ROCMExecutionProvider` が出ない
-本プロジェクトは MIGraphX を使うので **これは想定通り** です。
-`MIGraphXExecutionProvider` がリストに入っていれば OK。
+### `hipErrorInvalidImage` / `kpack_load_code_object failed with error: 13`
+wheel が gfx1151 用ではありません。`download.pytorch.org` のマルチアーキ
+wheel を入れてしまった典型例です ([§3-1](#3-1-gfx1151-専用-index-を使うこと))。
+`repo.amd.com/rocm/whl/gfx1151/` から入れ直してください。
 
-### MIGraphX のロードに失敗 (`libhipblas.so.2: cannot open shared object file`)
-`onnxruntime-rocm` が PyPI から入っている可能性が高いです:
 ```bash
-pip uninstall -y onnxruntime onnxruntime-rocm
-pip install -f https://repo.radeon.com/rocm/manylinux/rocm-rel-7.2.1/ onnxruntime-migraphx
+VIRTUAL_ENV=$PWD/.venv-torch uv pip install --reinstall \
+  --index-url https://repo.amd.com/rocm/whl/gfx1151/ \
+  --extra-index-url https://pypi.org/simple \
+  --index-strategy unsafe-best-match --prerelease allow \
+  torch==2.9.1+rocm7.13.0 torchvision==0.24.0+rocm7.13.0
 ```
 
-### `PARSE_RESIZE: keep_aspect_ratio_policy is not supported`
-ONNX が新 exporter (dynamo=True) で書かれています。`dynamo=False` で
-opset 17 として再エクスポートしてください ([§3](#3-onnx-エクスポートの落とし穴--dynamofalse-必須))。
+### `RuntimeError: operator torchvision::nms does not exist`
+torch と torchvision のバージョンが噛み合っていません
+([§3-2](#3-2-torch-と-torchvision-はバージョン組で固定すること))。
+組で固定して入れ直してください。
 
-### コンパイルが毎回走る
-- `config.yaml` の `runtime.compile_cache_dir` がコメントアウトされていないか
-- そのディレクトリが書き込み可能か (`ls -ld .migraphx_cache`)
-- ONNX を作り直した直後は新キャッシュになる (1 回だけ ~110 秒)
+### `ValueError: model.input_size は 14 の倍数である必要があります`
+DPT ヘッドの制約です。518 / 392 / 280 など 14 で割り切れる値にしてください。
 
-### GPU が使われない / 推論が CPU 並みに遅い
-- `session.get_providers()` の先頭が `MIGraphXExecutionProvider` か
-- `HSA_OVERRIDE_GFX_VERSION=11.5.1` が export されているか (`start_all.sh`
-  経由なら自動)
+### `load_state_dict` が size mismatch で落ちる
+`model.encoder` と `model.checkpoint` の組み合わせが食い違っています。
+`vits` なら `depth_anything_v2_vits.pth`、`vitl` なら
+`depth_anything_v2_vitl.pth` というように両方を揃えてください。
+
+### `torch.cuda.is_available()` が False
+- `ls /dev/kfd /dev/dri` が通るか (通らなければカーネル側の問題)
+- ユーザーが `render` / `video` グループに入っているか (`id`)
+- **`HSA_OVERRIDE_GFX_VERSION` が export されていないか** — 設定されていると
+  gfx1151 ネイティブ wheel が壊れます ([§3-3](#3-3-hsa_override_gfx_version-を設定しないこと))
+- `python -c "import torch; print(torch.version.hip)"` で HIP ビルドか確認
+
+### GPU が使われない / 推論が遅い
+- `runtime.precision` が `fp32` になっていないか (fp16 の約 2 倍遅い)
+- `runtime.device` が `cpu` になっていないか
+- `.venv-torch/bin/python test_inference.py` で推論単体を切り分ける
+  (fp16 vits 518² で約 12 ms / 78 FPS が目安)
 - 別ターミナルで `rocm-smi` を見て GPU 使用率が上がるか
+- 表示 FPS が 26〜30 で頭打ちなのは**正常**です (カメラの 30fps 律速、
+  [§8](#8-パフォーマンス))
+
+### 起動ログの警告について
+以下は無害で、動作に影響しません:
+- `xFormers not available` — DINOv2 が xformers を optional import しているだけ
+- `warning: xnack 'Off' was requested for a processor that does not support it!`
+- `MIOpen(HIP): Warning [ParseAndLoadDb] File is unreadable: ...gfx1151_20.HIP.fdb.txt`
+  — MIOpen の事前チューニング DB が同梱されていないだけ。畳み込みアルゴリズムは
+  初回実行時に自動選択され、結果はユーザーキャッシュに保存されます
 
 ### Chrome で映像が止まる
 - 開発者ツール Network タブで `/stream` が `pending` のまま継続しているか
@@ -378,8 +540,13 @@ opset 17 として再エクスポートしてください ([§3](#3-onnx-エク�
   赤く描画。
 - **WebSocket 化**: MJPEG → WS + binary で遅延をさらに詰める余地あり。
 - **HTTPS 化**: LAN 外公開する場合は Tailscale + Caddy が手早い。
-- **FP16 化**: `onnxconverter_common.float16` で半精度に変換、
-  メモリ帯域削減効果あり (gfx1151 で約 1.3-1.5x の高速化が期待値)。
+- **余った GPU 余力の活用**: 推論に 13 ms しか使っておらずカメラ律速なので、
+  より大きな encoder (`vitb` / `vitl`) や高解像度カメラに振っても
+  リアルタイム域を維持できる見込み。
+- **`torch.compile` の常用**: 上記でモデルを重くした場合に
+  `runtime.compile: true` が効いてくる。起動 1〜2 分とのトレードオフ。
+
+> FP16 化は既に実装済みです (`runtime.precision: fp16` が既定)。
 
 ---
 
@@ -388,19 +555,19 @@ opset 17 として再エクスポートしてください ([§3](#3-onnx-エク�
 ```
 RealtimeDepth/
 ├── app.py                  # Flask + DepthWorker (本体)
-├── test_inference.py       # 推論単体テスト (~30 ms/frame 目安)
+├── test_inference.py       # 推論単体ベンチ (~12.5 ms/frame 目安)
 ├── config.yaml             # ランタイム設定
 ├── start_all.sh            # 起動スクリプト (Chrome 自動起動)
 ├── stop_all.sh             # 停止スクリプト
 ├── READMEJ.md              # セットアップ手順書
 ├── TECHNICALJ.md           # 本書
+├── PROGRESS.md             # ROCm 7.14 対応の作業記録 (MIGraphX → PyTorch)
 ├── docs/
 │   ├── architecture.svg
 │   ├── threading.svg
 │   └── startup_sequence.svg
-├── Depth-Anything-V2 -> ~/Depth-Anything-V2  (symlink)
-├── depth_anything_v2_vits_518.onnx           (gitignore)
-├── .migraphx_cache/                          (gitignore)
+├── Depth-Anything-V2 -> ~/Depth-Anything-V2  (symlink; checkpoints/*.pth を含む)
+├── .venv-torch/            # PyTorch (ROCm) 実行環境 (gitignore)
 ├── .depth_app.pid                            (gitignore)
 └── depth_app.log                             (gitignore)
 ```
@@ -409,6 +576,11 @@ RealtimeDepth/
 
 ## 13. 変更履歴
 
+- **PyTorch (ROCm) 直接推論へ移行 (2026-07)**: ONNX Runtime + MIGraphX を廃止し、
+  `depth_anything_v2` パッケージを直接 import して `.pth` から推論する構成に変更。
+  Ubuntu 26.04 / ROCm 7.14 で GPU 実行が復活し、推論単体 12.5 ms/frame (79.9 FPS)。
+  venv は `.venv-torch` (Python 3.14)、wheel は `repo.amd.com/rocm/whl/gfx1151/`、
+  `HSA_OVERRIDE_GFX_VERSION` は不要に。経緯は §2〜§4 と `PROGRESS.md` を参照。
 - **複数カメラ / USB ホットプラグ対応**: `camera.devices` の優先順位リストと
   自動再接続を導入。旧形式の単一カメラ指定も後方互換で受け付ける。
 - **接続カメラの登録**: ELECOM 2MP Webcam を `by-id` 固定パスで登録。

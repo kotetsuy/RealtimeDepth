@@ -29,19 +29,19 @@
   <text x="350" y="95" text-anchor="middle" class="title">DepthWorker (背景スレッド)</text>
   <text x="350" y="125" text-anchor="middle">1. cv2.VideoCapture.read()</text>
   <text x="350" y="145" text-anchor="middle">2. preprocess (resize 518² + 正規化)</text>
-  <text x="350" y="165" text-anchor="middle">3. session.run( ONNX )</text>
+  <text x="350" y="165" text-anchor="middle">3. model(tensor)</text>
   <text x="350" y="185" text-anchor="middle">4. depth_to_colormap (INFERNO)</text>
   <text x="350" y="205" text-anchor="middle">5. hstack [元映像 | 深度マップ]</text>
   <text x="350" y="225" text-anchor="middle">6. cv2.imencode → JPEG</text>
   <text x="350" y="252" text-anchor="middle" class="small">latest_jpeg ← jpg ; frame_event.set()</text>
 
-  <!-- ONNX Runtime / MIGraphX -->
+  <!-- PyTorch (ROCm) -->
   <rect class="gpubox" x="540" y="70" width="220" height="120" rx="6"/>
-  <text x="650" y="95" text-anchor="middle" class="title">ONNX Runtime 1.24</text>
-  <text x="650" y="118" text-anchor="middle">MIGraphX EP</text>
-  <text x="650" y="138" text-anchor="middle" class="small">migraphx_model_cache_dir</text>
+  <text x="650" y="95" text-anchor="middle" class="title">PyTorch 2.9.1</text>
+  <text x="650" y="118" text-anchor="middle">DepthAnythingV2 (fp16)</text>
+  <text x="650" y="138" text-anchor="middle" class="small">torch.inference_mode()</text>
   <text x="650" y="156" text-anchor="middle" class="small">↓</text>
-  <text x="650" y="175" text-anchor="middle">ROCm 7.2.1 / gfx1151</text>
+  <text x="650" y="175" text-anchor="middle">ROCm (bundled) / gfx1151</text>
 
   <!-- Flask -->
   <rect class="box" x="540" y="210" width="220" height="80" rx="6"/>

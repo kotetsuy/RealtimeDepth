@@ -4,12 +4,13 @@ Depth Anything V2 リアルタイム深度推定 - ブラウザ表示サーバ�
 http://<NucBoxのIP>:8000/  にChromeでアクセス
 """
 import os
+import sys
 import threading
 import time
 
 import cv2
 import numpy as np
-import onnxruntime as ort
+import torch
 import yaml
 from flask import Flask, Response, render_template_string
 
@@ -18,7 +19,7 @@ CONFIG_PATH = os.environ.get('CONFIG_PATH', os.path.join(os.path.dirname(__file_
 with open(CONFIG_PATH, 'r') as f:
     CONFIG = yaml.safe_load(f)
 
-MODEL_PATH = CONFIG['model']['path']
+BASE_DIR = os.path.dirname(os.path.abspath(CONFIG_PATH))
 INPUT_SIZE = CONFIG['model']['input_size']
 
 
@@ -82,36 +83,83 @@ JPEG_QUALITY = CONFIG['server']['jpeg_quality']
 HOST = CONFIG['server']['host']
 PORT = CONFIG['server']['port']
 
-COMPILE_CACHE_DIR = CONFIG.get('runtime', {}).get('compile_cache_dir')
-if COMPILE_CACHE_DIR:
-    COMPILE_CACHE_DIR = os.path.abspath(os.path.join(os.path.dirname(CONFIG_PATH), COMPILE_CACHE_DIR))
-    os.makedirs(COMPILE_CACHE_DIR, exist_ok=True)
+# === PyTorch (ROCm) セットアップ ===
+# Depth Anything V2 は純 PyTorch モデルなので ONNX/MIGraphX を介さず直接推論する。
+# PyTorch の ROCm wheel は自前の ROCm ランタイムを同梱しているため、システム
+# /opt/rocm のバージョンには依存しない。gfx1151 ネイティブビルドを使うので
+# HSA_OVERRIDE_GFX_VERSION は設定してはいけない (設定すると逆に壊れる)。
+RUNTIME = CONFIG.get('runtime', {})
+DEVICE = RUNTIME.get('device', 'cuda')
+DTYPE = torch.float16 if RUNTIME.get('precision', 'fp16') == 'fp16' else torch.float32
+USE_COMPILE = bool(RUNTIME.get('compile', False))
 
-# === ONNX Runtime セットアップ ===
-# ROCm 7.1+ では ROCMExecutionProvider が廃止され MIGraphXExecutionProvider に統合
-migraphx_opts = {'device_id': 0}
-if COMPILE_CACHE_DIR:
-    migraphx_opts['migraphx_model_cache_dir'] = COMPILE_CACHE_DIR
-providers = [
-    ('MIGraphXExecutionProvider', migraphx_opts),
-    'CPUExecutionProvider',
-]
-sess_options = ort.SessionOptions()
-sess_options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+# DPT ヘッドは入力を 14x14 パッチに分割するため、入力サイズは 14 の倍数が必須。
+if INPUT_SIZE % 14 != 0:
+    raise ValueError(f'model.input_size は 14 の倍数である必要があります (指定値: {INPUT_SIZE})')
 
-session = ort.InferenceSession(MODEL_PATH, sess_options=sess_options, providers=providers)
-print('Active provider:', session.get_providers())
-INPUT_NAME = session.get_inputs()[0].name
+# 公式リポジトリの depth_anything_v2 パッケージを import できるようにする。
+DAV2_REPO = os.path.abspath(os.path.join(BASE_DIR, CONFIG['model']['repo']))
+if DAV2_REPO not in sys.path:
+    sys.path.insert(0, DAV2_REPO)
+from depth_anything_v2.dpt import DepthAnythingV2  # noqa: E402
 
-MEAN = np.array([0.485, 0.456, 0.406], dtype=np.float32).reshape(1, 1, 3)
-STD  = np.array([0.229, 0.224, 0.225], dtype=np.float32).reshape(1, 1, 3)
+# encoder ごとの DPT ヘッド構成 (公式 app.py の model_configs と同一)。
+ENCODER_CONFIGS = {
+    'vits': {'features': 64,  'out_channels': [48, 96, 192, 384]},
+    'vitb': {'features': 128, 'out_channels': [96, 192, 384, 768]},
+    'vitl': {'features': 256, 'out_channels': [256, 512, 1024, 1024]},
+    'vitg': {'features': 384, 'out_channels': [1536, 1536, 1536, 1536]},
+}
+ENCODER = CONFIG['model']['encoder']
+CHECKPOINT = os.path.abspath(os.path.join(BASE_DIR, CONFIG['model']['checkpoint']))
+
+print(f'Loading {ENCODER} from {CHECKPOINT} ...', flush=True)
+model = DepthAnythingV2(encoder=ENCODER, **ENCODER_CONFIGS[ENCODER])
+model.load_state_dict(torch.load(CHECKPOINT, map_location='cpu'))
+model = model.to(device=DEVICE, dtype=DTYPE).eval()
+if USE_COMPILE:
+    print('torch.compile 有効 (初回コンパイルに 1〜2 分かかります)', flush=True)
+    model = torch.compile(model, mode='reduce-overhead')
+
+if DEVICE.startswith('cuda'):
+    print('Device:', torch.cuda.get_device_name(0),
+          f'({torch.cuda.get_device_properties(0).gcnArchName})', flush=True)
+print('Precision:', str(DTYPE).replace('torch.', ''), flush=True)
+
+# 正規化は GPU 側で行う (CPU で float32 に展開するより転送量が 1/4 で済む)。
+MEAN = torch.tensor([0.485, 0.456, 0.406], device=DEVICE, dtype=DTYPE).view(1, 3, 1, 1)
+STD  = torch.tensor([0.229, 0.224, 0.225], device=DEVICE, dtype=DTYPE).view(1, 3, 1, 1)
 
 
 def preprocess(bgr):
+    """BGR フレーム -> 正規化済み (1, 3, S, S) テンソル (DEVICE 上)。"""
     rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
     resized = cv2.resize(rgb, (INPUT_SIZE, INPUT_SIZE), interpolation=cv2.INTER_CUBIC)
-    normalized = (resized.astype(np.float32) / 255.0 - MEAN) / STD
-    return np.transpose(normalized, (2, 0, 1))[None, ...].astype(np.float32)
+    # uint8 HWC のまま転送してから GPU 上で CHW / 正規化する。
+    t = torch.from_numpy(np.ascontiguousarray(resized)).to(DEVICE)
+    t = t.permute(2, 0, 1).unsqueeze(0).to(DTYPE).div_(255.0)
+    return (t - MEAN) / STD
+
+
+@torch.inference_mode()
+def infer(bgr):
+    """BGR フレーム -> 深度マップ (H=W=INPUT_SIZE の float32 ndarray)。"""
+    depth = model(preprocess(bgr))  # DepthAnythingV2.forward は (B, H, W) を返す
+    return depth[0].float().cpu().numpy()
+
+
+def warmup():
+    """初回実行のカーネル JIT / メモリ確保を起動時に済ませ、FPS 計測を安定させる。"""
+    dummy = np.zeros((INPUT_SIZE, INPUT_SIZE, 3), dtype=np.uint8)
+    t0 = time.time()
+    for _ in range(3):
+        infer(dummy)
+    if DEVICE.startswith('cuda'):
+        torch.cuda.synchronize()
+    print(f'Warmup done in {time.time() - t0:.1f}s', flush=True)
+
+
+warmup()
 
 
 def depth_to_colormap(depth, target_shape):
@@ -244,9 +292,7 @@ class DepthWorker:
                 continue
             read_fails = 0
 
-            inp = preprocess(frame)
-            out = session.run(None, {INPUT_NAME: inp})
-            depth = out[0][0]
+            depth = infer(frame)
             colored = depth_to_colormap(depth, frame.shape)
 
             display = np.hstack([frame, colored])
@@ -311,7 +357,7 @@ INDEX_HTML = """
   </style>
 </head>
 <body>
-  <h1>Depth Anything V2 Small / onnxruntime-migraphx / gfx1151</h1>
+  <h1>Depth Anything V2 Small / PyTorch ROCm / gfx1151</h1>
   <img class="stream" src="/stream" alt="depth stream">
   <div class="legend">
     左: 元映像 / 右: 深度マップ (明=近い, 暗=遠い, 想定レンジ ~10m)
