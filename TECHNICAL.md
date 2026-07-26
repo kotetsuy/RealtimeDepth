@@ -595,7 +595,8 @@ RealtimeDepth/
 │   ├── architecture-en.svg / architecture.svg
 │   ├── threading-en.svg    / threading.svg
 │   └── startup_sequence-en.svg / startup_sequence.svg
-├── Depth-Anything-V2 -> ~/Depth-Anything-V2  (symlink; holds checkpoints/*.pth)
+├── Depth-Anything-V2 -> <your clone>  (symlink you create; gitignored)
+│                            # official repo; holds checkpoints/*.pth
 ├── .venv-torch/            # PyTorch (ROCm) environment (gitignored)
 ├── .depth_app.pid                            (gitignored)
 └── depth_app.log                             (gitignored)

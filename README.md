@@ -126,9 +126,9 @@ is irrelevant here.
 
 ## 4. Clone Depth-Anything-V2 and download the checkpoint
 
-The official repo is large, so we clone it under `$HOME` and reference it
-from this project via a symlink (this repo's `Depth-Anything-V2` already
-points at `~/Depth-Anything-V2`).
+The official repo is large, so clone it outside this project and point at
+it with a symlink. `app.py` puts that path on `sys.path` to import the
+`depth_anything_v2` package, and loads the `.pth` from underneath it.
 
 ```bash
 cd ~
@@ -137,12 +137,24 @@ cd Depth-Anything-V2
 mkdir -p checkpoints
 wget -O checkpoints/depth_anything_v2_vits.pth \
   https://huggingface.co/depth-anything/Depth-Anything-V2-Small/resolve/main/depth_anything_v2_vits.pth
-
-# Confirm the symlink resolves
-ls -l ~/RealtimeDepth/Depth-Anything-V2
-# Should point to ~/Depth-Anything-V2. If it doesn't:
-#   ln -s ~/Depth-Anything-V2 ~/RealtimeDepth/Depth-Anything-V2
 ```
+
+**Create the symlink yourself.** It is deliberately *not* tracked by git —
+its target is an absolute path that differs per machine, so committing it
+would break every other checkout.
+
+```bash
+ln -s ~/Depth-Anything-V2 ~/RealtimeDepth/Depth-Anything-V2
+
+# Verify it resolves and the checkpoint is reachable
+ls -l ~/RealtimeDepth/Depth-Anything-V2
+ls ~/RealtimeDepth/Depth-Anything-V2/checkpoints/
+```
+
+If you'd rather clone the official repo straight into `~/RealtimeDepth/`
+instead of symlinking, that works too — `model.repo` in `config.yaml` is
+just a path relative to the config file. Either way the name
+`Depth-Anything-V2` is gitignored.
 
 ---
 

@@ -566,7 +566,8 @@ RealtimeDepth/
 │   ├── architecture.svg
 │   ├── threading.svg
 │   └── startup_sequence.svg
-├── Depth-Anything-V2 -> ~/Depth-Anything-V2  (symlink; checkpoints/*.pth を含む)
+├── Depth-Anything-V2 -> <各自のクローン先>  (自分で作る symlink; gitignore)
+│                            # 公式リポジトリ。checkpoints/*.pth を含む
 ├── .venv-torch/            # PyTorch (ROCm) 実行環境 (gitignore)
 ├── .depth_app.pid                            (gitignore)
 └── depth_app.log                             (gitignore)

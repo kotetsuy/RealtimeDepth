@@ -98,7 +98,17 @@ if INPUT_SIZE % 14 != 0:
     raise ValueError(f'model.input_size は 14 の倍数である必要があります (指定値: {INPUT_SIZE})')
 
 # 公式リポジトリの depth_anything_v2 パッケージを import できるようにする。
+# このパス (既定では symlink) は git 管理外なので、クローン直後は存在しない。
+# ModuleNotFoundError より先に、何をすればよいか分かるエラーを出す。
 DAV2_REPO = os.path.abspath(os.path.join(BASE_DIR, CONFIG['model']['repo']))
+if not os.path.isdir(os.path.join(DAV2_REPO, 'depth_anything_v2')):
+    raise SystemExit(
+        f'Depth Anything V2 のリポジトリが見つかりません: {DAV2_REPO}\n'
+        'このパスは環境依存のため git 管理外です。README の手順 4 に従って\n'
+        '公式リポジトリをクローンし、symlink を作成してください:\n'
+        '  git clone https://github.com/DepthAnything/Depth-Anything-V2.git ~/Depth-Anything-V2\n'
+        f'  ln -s ~/Depth-Anything-V2 {DAV2_REPO}'
+    )
 if DAV2_REPO not in sys.path:
     sys.path.insert(0, DAV2_REPO)
 from depth_anything_v2.dpt import DepthAnythingV2  # noqa: E402
@@ -112,6 +122,14 @@ ENCODER_CONFIGS = {
 }
 ENCODER = CONFIG['model']['encoder']
 CHECKPOINT = os.path.abspath(os.path.join(BASE_DIR, CONFIG['model']['checkpoint']))
+if not os.path.isfile(CHECKPOINT):
+    raise SystemExit(
+        f'チェックポイントが見つかりません: {CHECKPOINT}\n'
+        'README の手順 4 に従ってダウンロードしてください:\n'
+        f'  wget -O {CHECKPOINT} \\\n'
+        f'    https://huggingface.co/depth-anything/Depth-Anything-V2-Small'
+        f'/resolve/main/depth_anything_v2_{ENCODER}.pth'
+    )
 
 print(f'Loading {ENCODER} from {CHECKPOINT} ...', flush=True)
 model = DepthAnythingV2(encoder=ENCODER, **ENCODER_CONFIGS[ENCODER])

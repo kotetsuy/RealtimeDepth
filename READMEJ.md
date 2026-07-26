@@ -122,9 +122,9 @@ torch を入れると依存として `rocm-sdk-libraries-gfx1151` (wheel 専用�
 
 ## 4. Depth-Anything-V2 のクローンとモデル取得
 
-公式リポジトリは大きいので `$HOME` 直下にクローンし、本プロジェクトには
-シンボリックリンクで参照します (本リポジトリの `Depth-Anything-V2` は
-`~/Depth-Anything-V2` を指す symlink です)。
+公式リポジトリは大きいので本プロジェクトの外にクローンし、シンボリック
+リンクで参照します。`app.py` はそのパスを `sys.path` に追加して
+`depth_anything_v2` パッケージを import し、配下の `.pth` を読み込みます。
 
 ```bash
 cd ~
@@ -133,13 +133,23 @@ cd Depth-Anything-V2
 mkdir -p checkpoints
 wget -O checkpoints/depth_anything_v2_vits.pth \
   https://huggingface.co/depth-anything/Depth-Anything-V2-Small/resolve/main/depth_anything_v2_vits.pth
-
-# 本プロジェクトから参照できるよう symlink を確認
-ls -l ~/RealtimeDepth/Depth-Anything-V2
-# → ~/Depth-Anything-V2 を指している symlink ならOK
-# 無ければ:
-#   ln -s ~/Depth-Anything-V2 ~/RealtimeDepth/Depth-Anything-V2
 ```
+
+**symlink は各自で作成してください。** これは意図的に git の管理対象から
+外しています。リンク先がマシンごとに異なる絶対パスになるため、コミットすると
+他のチェックアウトで必ず壊れるからです。
+
+```bash
+ln -s ~/Depth-Anything-V2 ~/RealtimeDepth/Depth-Anything-V2
+
+# 解決できること・チェックポイントが見えることを確認
+ls -l ~/RealtimeDepth/Depth-Anything-V2
+ls ~/RealtimeDepth/Depth-Anything-V2/checkpoints/
+```
+
+symlink ではなく公式リポジトリを `~/RealtimeDepth/` 直下に直接クローンしても
+構いません。`config.yaml` の `model.repo` は config からの相対パスにすぎない
+ためです。いずれの場合も `Depth-Anything-V2` という名前は gitignore 済みです。
 
 ---
 
