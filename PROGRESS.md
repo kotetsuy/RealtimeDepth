@@ -53,6 +53,27 @@ VIRTUAL_ENV=$PWD/.venv-torch uv pip install flask opencv-python pyyaml
   を import している。
 - `rocm-sdk-libraries-gfx1151==7.13.0` が依存として自動で入る = システム `/opt/rocm` (7.14) 非依存。
 
+### モデルリポジトリとチェックポイントの配置
+
+PyTorch 直接推論では `depth_anything_v2` パッケージを import するため、公式リポジトリ本体が
+必要になる (ONNX 経路では `.onnx` 1 ファイルで完結していた)。リポジトリは `$HOME` 直下に
+clone し、プロジェクトには symlink を張る:
+
+```bash
+git clone https://github.com/DepthAnything/Depth-Anything-V2.git ~/Depth-Anything-V2
+
+mkdir -p ~/Depth-Anything-V2/checkpoints
+curl -L -o ~/Depth-Anything-V2/checkpoints/depth_anything_v2_vits.pth \
+  https://huggingface.co/depth-anything/Depth-Anything-V2-Small/resolve/main/depth_anything_v2_vits.pth
+
+ln -s ~/Depth-Anything-V2 ~/RealtimeDepth/Depth-Anything-V2
+```
+
+- チェックポイントは vits (Small) で約 95MB。`config.yaml` の `model.encoder` を変える場合は
+  対応する `.pth` (`vitb` = Base, `vitl` = Large) を同じ `checkpoints/` に置く。
+- symlink と clone は **git の管理外** (`.gitignore` 済み)。マシンごとに手動で用意する。
+  clone 実体をプロジェクト内に置かないのは、リポジトリの中に別リポジトリが入るのを避けるため。
+
 ### `HSA_OVERRIDE_GFX_VERSION` は設定しないこと
 
 repo.amd.com の gfx1151 wheel は gfx1151 ネイティブビルドなので、override を付けると
