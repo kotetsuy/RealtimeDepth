@@ -1,5 +1,9 @@
 # RealtimeDepth — technical notes
 
+> ROCm 10 update: see [README §3](README.md#3-python-environment-for-rocm-10) for current setup.
+> The runtime is PyTorch 2.13.0 / torchvision 0.28.0 (ROCm 10.0.0, gfx1151 extras) in `.venv-rocm10`.
+> ROCm 7 package details, installation commands and performance figures below are historical.
+
 For setup steps, see [README.md](./README.md). This document covers
 architecture, design decisions, performance characteristics, and
 deeper troubleshooting.

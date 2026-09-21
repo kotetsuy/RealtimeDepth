@@ -59,64 +59,28 @@ python3.14 --version    # 3.14.x が出ること
 
 ---
 
-## 3. venv と Python 依存パッケージ
+## 3. ROCm 10 の Python 環境
 
-最重要なのは **wheel の入手元** です。必ず AMD の gfx1151 専用 index を使います:
-
-```
-https://repo.amd.com/rocm/whl/gfx1151/
-```
-
-`download.pytorch.org` の ROCm index は使わないでください。あちらは
-マルチアーキの kpack ビルドで、gfx1151 では実行時に
-`hipErrorInvalidImage` / `kpack_load_code_object failed with error: 13`
-になります。
+AMD 公式の ROCm 10.0.0 用 PyTorch 2.13.0 / torchvision 0.28.0 を使用します。
+`device-gfx1151` extra で Radeon 8060S 用カーネルを導入します。
 
 ```bash
-# ここでは uv を使用。python3.14 -m venv + pip でも構いません。
-uv venv --python 3.14 .venv-torch
-
-VIRTUAL_ENV=$PWD/.venv-torch uv pip install \
-  --index-url https://repo.amd.com/rocm/whl/gfx1151/ \
-  --extra-index-url https://pypi.org/simple \
-  --index-strategy unsafe-best-match --prerelease allow \
-  torch==2.9.1+rocm7.13.0 torchvision==0.24.0+rocm7.13.0
-
-VIRTUAL_ENV=$PWD/.venv-torch uv pip install flask opencv-python pyyaml
+bash setup_rocm10.sh
+.venv-rocm10/bin/python test_inference.py
+./start_all.sh
 ```
 
-> **torch と torchvision はバージョン組で固定すること。** index には
-> torchvision 0.24.0 / 0.25.0 / 0.26.0 が並んでいますが、torch 2.9.1 に
-> 対応するのは **0.24.0** だけです。ズレると import 時に
-> `RuntimeError: operator torchvision::nms does not exist` で落ちます。
->
-> | torch | torchvision |
-> | --- | --- |
-> | 2.9.1 | 0.24.0 |
-> | 2.10.0 | 0.25.0 |
-> | 2.11.0 | 0.26.0 |
->
-> torchvision は省略できません。`depth_anything_v2/dpt.py` が
-> `from torchvision.transforms import Compose` を import しています。
+`uv` と Python 3.14 が必要です。セットアップは `.venv-rocm10` を作成し、
+旧 `.venv-torch` は変更しません。別環境は `VENV_DIR` で指定できます
+（セットアップ・起動の両方で同じ値を指定）。
 
-GPU 認識の確認:
+依存バージョンと配布先は `requirements-rocm10.txt` に固定しています。
+ROCm 7 の旧 index ではなく `https://stable.repo.amd.com/rocm/whl-next/` を使用します。
+`HSA_OVERRIDE_GFX_VERSION` は設定せず、`runtime.device: cuda` を使います。
+システムの `/opt/rocm` の更新だけでは Python の HIP ランタイムは更新されません。
+GPU 実行には `/dev/kfd` と `/dev/dri` へのアクセスが必要です。
 
-```bash
-.venv-torch/bin/python -c "
-import torch
-print(torch.cuda.is_available())
-print(torch.cuda.get_device_properties(0).gcnArchName)"
-# → True / gfx1151 が出れば OK
-```
-
-> **`HSA_OVERRIDE_GFX_VERSION` は設定しないこと。** この wheel は gfx1151
-> ネイティブビルドなので、アーキを override すると壊れます。シェルの
-> プロファイルで export されている場合に備え、`start_all.sh` は明示的に
-> `unset` しています。
-
-torch を入れると依存として `rocm-sdk-libraries-gfx1151` (wheel 専用の ROCm
-ランタイム) も入ります。システムの `/opt/rocm` のバージョンが無関係なのは
-このためです。
+[AMD PyTorch installation](https://rocm.docs.amd.com/projects/ai-ecosystem/en/latest/frameworks/pytorch/install.html)
 
 ---
 
@@ -257,7 +221,7 @@ cd ~/RealtimeDepth
 
 実行されること:
 
-1. `.venv-torch` を activate し、`HSA_OVERRIDE_GFX_VERSION` を `unset`
+1. `.venv-rocm10` を activate し、`HSA_OVERRIDE_GFX_VERSION` を `unset`
 2. `app.py` をバックグラウンド起動 (PID は `.depth_app.pid` に保存)
 3. モデルロード + GPU ウォームアップ待ち (約 7 秒。`runtime.compile` が
    有効なら 1〜2 分)
@@ -318,11 +282,11 @@ Mac の Chrome から `http://<NucBoxのIP>:8000/` でアクセス。
 
 | 症状 | 確認・対処 |
 | --- | --- |
-| `hipErrorInvalidImage` / `kpack_load_code_object failed with error: 13` | wheel を `repo.amd.com/rocm/whl/gfx1151/` ではなく `download.pytorch.org` から入れている。手順 3 で入れ直す |
-| `RuntimeError: operator torchvision::nms does not exist` | torch と torchvision のバージョン不一致。組で固定する (torch 2.9.1 ↔ torchvision 0.24.0) |
+| `hipErrorInvalidImage` / `kpack_load_code_object failed with error: 13` | wheel を `stable.repo.amd.com/rocm/whl-next/` ではなく `download.pytorch.org` から入れている。手順 3 で入れ直す |
+| `RuntimeError: operator torchvision::nms does not exist` | torch と torchvision のバージョン不一致。組で固定する (torch 2.13.0 ↔ torchvision 0.28.0) |
 | `torch.cuda.is_available()` が `False` | `ls /dev/kfd /dev/dri` の確認と、ユーザーが `render` / `video` グループに入っているか確認。`HSA_OVERRIDE_GFX_VERSION` が export されて**いない**ことも確認 |
 | 「NO CAMERA」プレースホルダから変わらない | 登録済みカメラが未接続。`ls /dev/v4l/by-id/` で `camera.devices` のいずれかに一致するパスがあるか、別アプリが占有していないか確認 |
 | Chrome が自動起動しない | `DISPLAY` / `WAYLAND_DISPLAY` 不在 (SSH 等)。表示された URL を手動で開く |
-| FPS が出ない | `.venv-torch/bin/python test_inference.py` で推論単体を切り分ける (fp16 vits 518² で約 12 ms / 78 FPS が目安)。`rocm-smi` で GPU 使用率を確認し、`runtime.precision` が `fp32` になっていないか確認 |
+| FPS が出ない | `.venv-rocm10/bin/python test_inference.py` で推論単体を切り分ける (fp16 vits 518² で約 12 ms / 78 FPS が目安)。`rocm-smi` で GPU 使用率を確認し、`runtime.precision` が `fp32` になっていないか確認 |
 
 より詳細なトラブルシュートは [TECHNICALJ.md](./TECHNICALJ.md) を参照。

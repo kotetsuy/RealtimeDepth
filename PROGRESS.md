@@ -172,3 +172,24 @@ MIGraphX の ~110 秒の初回 JIT コンパイルと `.migraphx_cache` が不�
       - 削除前に現行コードからの参照がゼロであることを確認済み
       - exec-stack パッチを当てた `onnxruntime_pybind11_state.so` と
         そのバックアップも `.venv` ごと消滅 (PyTorch 経路では不要)
+
+
+## ROCm 10 migration (2026-09-21)
+
+- Added `requirements-rocm10.txt` with AMD's official `whl-next` index:
+  `torch[device-gfx1151]==2.13.0+rocm10.0.0` and
+  `torchvision[device-gfx1151]==0.28.0+rocm10.0.0`.
+- `bash setup_rocm10.sh` installs into `.venv-rocm10`; the previous
+  `.venv-torch` is retained. `start_all.sh` uses the new environment.
+- Shared runtime validation reports the selected GPU, PyTorch and HIP versions,
+  and removes the architecture override before importing PyTorch.
+- Installed dependencies passed `uv pip check`.
+- Radeon 8060S / gfx1151, vits, 518x518, fp16, eager: 30 measured forwards
+  after 3 warmups averaged 12.5 ms (80.2 FPS). Output shape and finite values passed.
+- Flask test client: `/` and `/stats` returned 200; `/stream` produced a JPEG.
+  Jieli Camera was detected; sampled pipeline rate was 25.46 FPS.
+- This AMD ROCm 10 wheel reports `torch.version.hip == 7.15.26333`;
+  its package version is `2.13.0+rocm10.0.0` and SDK packages are `10.0.0`.
+- Shell syntax, Python compilation and `git diff --check` passed.
+- GPU validation ran outside the sandbox, which hides `/dev/kfd` and `/dev/dri`.
+  The smoke test stopped its camera worker; no persistent server was started.

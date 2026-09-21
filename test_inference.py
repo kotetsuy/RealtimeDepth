@@ -1,6 +1,6 @@
 """推論単体のベンチマーク。app.py の設定 (config.yaml) をそのまま使う。
 
-    .venv-torch/bin/python test_inference.py
+    .venv-rocm10/bin/python test_inference.py
 """
 import os
 import sys
@@ -8,6 +8,7 @@ import time
 
 import cv2
 import numpy as np
+from runtime import configure_runtime
 import torch
 import yaml
 
@@ -16,10 +17,14 @@ CONFIG_PATH = os.environ.get('CONFIG_PATH', os.path.join(BASE_DIR, 'config.yaml'
 with open(CONFIG_PATH, 'r') as f:
     CONFIG = yaml.safe_load(f)
 
+BASE_DIR = os.path.dirname(os.path.abspath(CONFIG_PATH))
+
 INPUT_SIZE = CONFIG['model']['input_size']
 RUNTIME = CONFIG.get('runtime', {})
-DEVICE = RUNTIME.get('device', 'cuda')
-DTYPE = torch.float16 if RUNTIME.get('precision', 'fp16') == 'fp16' else torch.float32
+DEVICE, DTYPE = configure_runtime(RUNTIME)
+
+if INPUT_SIZE % 14 != 0:
+    raise ValueError('model.input_size must be a multiple of 14')
 
 sys.path.insert(0, os.path.abspath(os.path.join(BASE_DIR, CONFIG['model']['repo'])))
 from depth_anything_v2.dpt import DepthAnythingV2  # noqa: E402
@@ -34,12 +39,11 @@ ENCODER = CONFIG['model']['encoder']
 
 model = DepthAnythingV2(encoder=ENCODER, **ENCODER_CONFIGS[ENCODER])
 model.load_state_dict(torch.load(
-    os.path.abspath(os.path.join(BASE_DIR, CONFIG['model']['checkpoint'])), map_location='cpu'))
+    os.path.abspath(os.path.join(BASE_DIR, CONFIG['model']['checkpoint'])), map_location='cpu', weights_only=True))
 model = model.to(device=DEVICE, dtype=DTYPE).eval()
+if RUNTIME.get('compile', False):
+    model = torch.compile(model, mode='reduce-overhead')
 
-if DEVICE.startswith('cuda'):
-    print('Device:', torch.cuda.get_device_name(0),
-          f'({torch.cuda.get_device_properties(0).gcnArchName})')
 print('Precision:', str(DTYPE).replace('torch.', ''))
 
 MEAN = torch.tensor([0.485, 0.456, 0.406], device=DEVICE, dtype=DTYPE).view(1, 3, 1, 1)
@@ -83,4 +87,6 @@ with torch.inference_mode():
 print(f'Avg inference: {elapsed/N*1000:.1f} ms ({N/elapsed:.1f} FPS)')
 
 depth = out[0].float().cpu().numpy()
+assert depth.shape == (INPUT_SIZE, INPUT_SIZE), depth.shape
+assert np.isfinite(depth).all(), 'Depth contains NaN or infinity'
 print('Depth shape:', depth.shape, 'min:', depth.min(), 'max:', depth.max())

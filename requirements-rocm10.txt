@@ -1,0 +1,4 @@
+# AMD ROCm 10 wheels; device extras install the gfx1151 kernels.
+--index-url https://stable.repo.amd.com/rocm/whl-next/
+torch[device-gfx1151]==2.13.0+rocm10.0.0
+torchvision[device-gfx1151]==0.28.0+rocm10.0.0

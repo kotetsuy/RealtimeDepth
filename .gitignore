@@ -235,3 +235,7 @@ __marimo__/
 .depth_app.pid
 depth_app.log
 
+
+# ROCm 10 environment and local installer cache
+.venv-rocm10/
+.cache/

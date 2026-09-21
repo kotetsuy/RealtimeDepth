@@ -10,6 +10,7 @@ import time
 
 import cv2
 import numpy as np
+from runtime import configure_runtime
 import torch
 import yaml
 from flask import Flask, Response, render_template_string
@@ -89,8 +90,7 @@ PORT = CONFIG['server']['port']
 # /opt/rocm のバージョンには依存しない。gfx1151 ネイティブビルドを使うので
 # HSA_OVERRIDE_GFX_VERSION は設定してはいけない (設定すると逆に壊れる)。
 RUNTIME = CONFIG.get('runtime', {})
-DEVICE = RUNTIME.get('device', 'cuda')
-DTYPE = torch.float16 if RUNTIME.get('precision', 'fp16') == 'fp16' else torch.float32
+DEVICE, DTYPE = configure_runtime(RUNTIME)
 USE_COMPILE = bool(RUNTIME.get('compile', False))
 
 # DPT ヘッドは入力を 14x14 パッチに分割するため、入力サイズは 14 の倍数が必須。
@@ -133,15 +133,12 @@ if not os.path.isfile(CHECKPOINT):
 
 print(f'Loading {ENCODER} from {CHECKPOINT} ...', flush=True)
 model = DepthAnythingV2(encoder=ENCODER, **ENCODER_CONFIGS[ENCODER])
-model.load_state_dict(torch.load(CHECKPOINT, map_location='cpu'))
+model.load_state_dict(torch.load(CHECKPOINT, map_location='cpu', weights_only=True))
 model = model.to(device=DEVICE, dtype=DTYPE).eval()
 if USE_COMPILE:
     print('torch.compile 有効 (初回コンパイルに 1〜2 分かかります)', flush=True)
     model = torch.compile(model, mode='reduce-overhead')
 
-if DEVICE.startswith('cuda'):
-    print('Device:', torch.cuda.get_device_name(0),
-          f'({torch.cuda.get_device_properties(0).gcnArchName})', flush=True)
 print('Precision:', str(DTYPE).replace('torch.', ''), flush=True)
 
 # 正規化は GPU 側で行う (CPU で float32 に展開するより転送量が 1/4 で済む)。

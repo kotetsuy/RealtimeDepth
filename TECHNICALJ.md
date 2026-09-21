@@ -1,5 +1,9 @@
 # RealtimeDepth — 技術解説
 
+> ROCm 10 対応: 現在の導入手順は [READMEJ §3](READMEJ.md#3-rocm-10-の-python-環境) を参照。
+> PyTorch 2.13.0 / torchvision 0.28.0（ROCm 10.0.0、gfx1151 extra）、`.venv-rocm10` を使用します。
+> 以下の ROCm 7 パッケージ・導入コマンド・性能値は移行前の記録です。
+
 セットアップ手順は [READMEJ.md](./READMEJ.md) を参照。本書はアーキテクチャ、
 設計判断、パフォーマンス特性、トラブルシュートを扱います。
 

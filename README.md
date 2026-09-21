@@ -64,63 +64,28 @@ python3.14 --version    # expect 3.14.x
 
 ---
 
-## 3. Create the venv and install Python dependencies
+## 3. Python environment for ROCm 10
 
-The critical part is the **wheel index**. You must use AMD's
-gfx1151-specific index:
-
-```
-https://repo.amd.com/rocm/whl/gfx1151/
-```
-
-Do **not** use `download.pytorch.org`'s ROCm index. Those are multi-arch
-kpack builds, and on gfx1151 they fail at run time with
-`hipErrorInvalidImage` / `kpack_load_code_object failed with error: 13`.
+Use AMD ROCm 10.0.0 builds of PyTorch 2.13.0 and torchvision 0.28.0.
+The `device-gfx1151` extra installs Radeon 8060S kernels.
 
 ```bash
-# uv is used here; plain python3.14 -m venv + pip works too.
-uv venv --python 3.14 .venv-torch
-
-VIRTUAL_ENV=$PWD/.venv-torch uv pip install \
-  --index-url https://repo.amd.com/rocm/whl/gfx1151/ \
-  --extra-index-url https://pypi.org/simple \
-  --index-strategy unsafe-best-match --prerelease allow \
-  torch==2.9.1+rocm7.13.0 torchvision==0.24.0+rocm7.13.0
-
-VIRTUAL_ENV=$PWD/.venv-torch uv pip install flask opencv-python pyyaml
+bash setup_rocm10.sh
+.venv-rocm10/bin/python test_inference.py
+./start_all.sh
 ```
 
-> **Pin torch and torchvision as a matched pair.** The index lists
-> torchvision 0.24.0 / 0.25.0 / 0.26.0 side by side, but only **0.24.0**
-> goes with torch 2.9.1. A mismatch fails at import time with
-> `RuntimeError: operator torchvision::nms does not exist`.
->
-> | torch | torchvision |
-> | --- | --- |
-> | 2.9.1 | 0.24.0 |
-> | 2.10.0 | 0.25.0 |
-> | 2.11.0 | 0.26.0 |
->
-> torchvision is not optional — `depth_anything_v2/dpt.py` imports
-> `from torchvision.transforms import Compose`.
+Requires `uv` and Python 3.14. Setup creates `.venv-rocm10` and leaves
+the old `.venv-torch` unchanged. Set `VENV_DIR` for a different environment
+(use the same value during setup and launch).
 
-Verify the GPU is picked up:
+Versions and the AMD index are pinned in `requirements-rocm10.txt`.
+Use `https://stable.repo.amd.com/rocm/whl-next/` instead of the old ROCm 7 index.
+Leave `HSA_OVERRIDE_GFX_VERSION` unset and use `runtime.device: cuda`.
+Updating `/opt/rocm` alone does not update Python's HIP runtime.
+GPU execution requires access to `/dev/kfd` and `/dev/dri`.
 
-```bash
-.venv-torch/bin/python -c "
-import torch
-print(torch.cuda.is_available())
-print(torch.cuda.get_device_properties(0).gcnArchName)"
-# Expect: True  /  gfx1151
-```
-
-> **Do not set `HSA_OVERRIDE_GFX_VERSION`.** These wheels are native
-> gfx1151 builds; overriding the arch breaks them. `start_all.sh`
-> explicitly `unset`s it in case it is exported from your shell profile.
-
-Installing torch also pulls in `rocm-sdk-libraries-gfx1151`, the private
-ROCm runtime the wheel uses. That is why the system `/opt/rocm` version
-is irrelevant here.
+[AMD PyTorch installation](https://rocm.docs.amd.com/projects/ai-ecosystem/en/latest/frameworks/pytorch/install.html)
 
 ---
 
@@ -266,7 +231,7 @@ cd ~/RealtimeDepth
 
 What this does:
 
-1. activates `.venv-torch` and `unset`s `HSA_OVERRIDE_GFX_VERSION`
+1. activates `.venv-rocm10` and `unset`s `HSA_OVERRIDE_GFX_VERSION`
 2. starts `app.py` in the background (PID written to `.depth_app.pid`)
 3. waits for the model load + GPU warmup (~7 s; 1–2 min if
    `runtime.compile` is on)
@@ -330,11 +295,11 @@ Then from your Mac's Chrome: `http://<NucBox-IP>:8000/`.
 
 | Symptom | What to check |
 | --- | --- |
-| `hipErrorInvalidImage` / `kpack_load_code_object failed with error: 13` | The wheel came from `download.pytorch.org` instead of `repo.amd.com/rocm/whl/gfx1151/`. Reinstall per step 3. |
-| `RuntimeError: operator torchvision::nms does not exist` | torch/torchvision version mismatch. Pin them as a pair (torch 2.9.1 ↔ torchvision 0.24.0). |
+| `hipErrorInvalidImage` / `kpack_load_code_object failed with error: 13` | The wheel came from `download.pytorch.org` instead of `stable.repo.amd.com/rocm/whl-next/`. Reinstall per step 3. |
+| `RuntimeError: operator torchvision::nms does not exist` | torch/torchvision version mismatch. Pin them as a pair (torch 2.13.0 ↔ torchvision 0.28.0). |
 | `torch.cuda.is_available()` is `False` | Check `ls /dev/kfd /dev/dri` and that your user is in the `render` / `video` groups. Also make sure `HSA_OVERRIDE_GFX_VERSION` is **not** exported. |
 | Stream stuck on the "NO CAMERA" placeholder | No registered camera is connected. Run `ls /dev/v4l/by-id/` and confirm a path matching a `camera.devices` entry exists and no other app is holding the device. |
 | Chrome doesn't auto-launch | `DISPLAY` / `WAYLAND_DISPLAY` is missing (e.g., over SSH). Open the printed URL manually. |
-| Low FPS | Run `.venv-torch/bin/python test_inference.py` to isolate inference from camera I/O (expect ~12 ms / ~78 FPS at fp16 vits 518²). Watch `rocm-smi` for GPU utilization, and confirm `runtime.precision` is `fp16`, not `fp32`. |
+| Low FPS | Run `.venv-rocm10/bin/python test_inference.py` to isolate inference from camera I/O (expect ~12 ms / ~78 FPS at fp16 vits 518²). Watch `rocm-smi` for GPU utilization, and confirm `runtime.precision` is `fp16`, not `fp32`. |
 
 For deeper diagnostics, see [TECHNICAL.md](./TECHNICAL.md).

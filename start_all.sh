@@ -12,13 +12,18 @@ if [[ -f "$PID_FILE" ]] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
 fi
 rm -f "$PID_FILE"
 
+VENV_DIR="${VENV_DIR:-$PWD/.venv-rocm10}"
+if [[ ! -f "$VENV_DIR/bin/activate" ]]; then
+  echo "Missing $VENV_DIR. Run bash setup_rocm10.sh first." >&2
+  exit 1
+fi
 # shellcheck disable=SC1091
-source .venv-torch/bin/activate
+source "$VENV_DIR/bin/activate"
 # HSA_OVERRIDE_GFX_VERSION は設定しない。
 # repo.amd.com の gfx1151 wheel はネイティブビルドなので override すると壊れる。
 unset HSA_OVERRIDE_GFX_VERSION
 
-PORT=$(python -c "import yaml; print(yaml.safe_load(open('config.yaml'))['server']['port'])")
+PORT=$(python -c "import os, yaml; print(yaml.safe_load(open(os.environ.get('CONFIG_PATH', 'config.yaml')))['server']['port'])")
 
 : > "$LOG_FILE"
 nohup python app.py >>"$LOG_FILE" 2>&1 &
