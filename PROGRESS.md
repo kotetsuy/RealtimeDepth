@@ -193,3 +193,14 @@ MIGraphX の ~110 秒の初回 JIT コンパイルと `.migraphx_cache` が不�
 - Shell syntax, Python compilation and `git diff --check` passed.
 - GPU validation ran outside the sandbox, which hides `/dev/kfd` and `/dev/dri`.
   The smoke test stopped its camera worker; no persistent server was started.
+
+### Local checkout revalidation (2026-09-21)
+
+- Fetched origin and fast-forwarded `main` from `3a507a8` to `aa4ae59`.
+- Created this checkout's `.venv-rocm10` with `bash setup_rocm10.sh`;
+  all 29 installed packages passed `uv pip check`.
+- Radeon 8060S / gfx1151 GPU inference: 13.1 ms (76.2 FPS), vits / 518 / fp16;
+  output shape `(518, 518)` and finite values passed.
+- Flask `/` and `/stats` returned 200, and `/stream` produced JPEG data.
+  Jieli Camera was detected at a sampled 25.58 FPS. The worker was stopped
+  after validation; launch normally with `./start_all.sh`.
