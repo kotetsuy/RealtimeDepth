@@ -12,11 +12,18 @@ if [[ -f "$PID_FILE" ]] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
 fi
 rm -f "$PID_FILE"
 
+VENV_DIR="${VENV_DIR:-$PWD/.venv-rocm10}"
+if [[ ! -f "$VENV_DIR/bin/activate" ]]; then
+  echo "Missing $VENV_DIR. Run bash setup_rocm10.sh first." >&2
+  exit 1
+fi
 # shellcheck disable=SC1091
-source .venv/bin/activate
-export HSA_OVERRIDE_GFX_VERSION=11.5.0
+source "$VENV_DIR/bin/activate"
+# HSA_OVERRIDE_GFX_VERSION は設定しない。
+# repo.amd.com の gfx1150 wheel はネイティブビルドなので override すると壊れる。
+unset HSA_OVERRIDE_GFX_VERSION
 
-PORT=$(python -c "import yaml; print(yaml.safe_load(open('config.yaml'))['server']['port'])")
+PORT=$(python -c "import os, yaml; print(yaml.safe_load(open(os.environ.get('CONFIG_PATH', 'config.yaml')))['server']['port'])")
 
 : > "$LOG_FILE"
 nohup python app.py >>"$LOG_FILE" 2>&1 &
@@ -24,7 +31,7 @@ APP_PID=$!
 echo "$APP_PID" > "$PID_FILE"
 echo "started (pid $APP_PID), log: $LOG_FILE"
 
-echo "waiting for ready (cold start ~110s, cached ~3s)..."
+echo "waiting for ready (model load + warmup ~10s; torch.compile 有効時は 1〜2 分)..."
 for _ in $(seq 1 60); do
   if ! kill -0 "$APP_PID" 2>/dev/null; then
     echo "app exited unexpectedly, last log lines:" >&2
@@ -32,7 +39,7 @@ for _ in $(seq 1 60); do
     rm -f "$PID_FILE"
     exit 1
   fi
-  # /stats が 200 を返せばサーバ稼働 (MIGraphX コンパイルは Flask 起動前に完了している)。
+  # /stats が 200 を返せばサーバ稼働 (モデルロードと warmup は Flask 起動前に完了している)。
   # カメラ未接続でもプレースホルダ配信で稼働するため fps>0 は条件にしない。
   resp=$(curl -fs --max-time 1 "http://127.0.0.1:${PORT}/stats" 2>/dev/null || true)
   if [[ -n "$resp" ]]; then

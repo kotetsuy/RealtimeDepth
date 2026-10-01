@@ -1,12 +1,20 @@
 # RealtimeDepth — リアルタイム深度推定デモ (セットアップ手順書)
 
-Depth Anything V2 Small を AMD Ryzen AI MAX+ 395 (gfx1150 / Strix Halo) 上で
-ROCm + MIGraphX で動かし、USB カメラ映像を Chrome に MJPEG ストリーミング
+Depth Anything V2 Small を AMD Ryzen AI 9 HX 370 (gfx1150 / Strix Point) 上で
+**PyTorch (ROCm)** で動かし、USB カメラ映像を Chrome に MJPEG ストリーミング
 するデモです。
 
 このドキュメントは **`git clone` から `./start_all.sh` でブラウザ表示が
 始まるところまで** の手順書です。技術的な内容は [TECHNICALJ.md](./TECHNICALJ.md)
 を参照してください。
+
+> このブランチは HX370 / Radeon 890M (gfx1150) 向けです。main の最新の
+> PyTorch / ROCm 実装を統合しています。TECHNICALJ.md の過去の gfx1151
+> 測定値は HX370 の性能を示すものではありません。
+
+HX370 実機検証（2026-10-01）: fp16 / vits / 518×518、30 回の推論単体で
+平均 **39.7 ms（25.2 FPS）**。Jieli Camera の取り込み、HTTP 応答、
+1280×480 の MJPEG フレーム取得も確認済みです。配信 FPS は推論単体とは異なります。
 
 ---
 
@@ -14,15 +22,17 @@ ROCm + MIGraphX で動かし、USB カメラ映像を Chrome に MJPEG ストリ
 
 | 項目 | バージョン / 状態 |
 | --- | --- |
-| マシン | GMKtec NucBox EVO X2 等 (Ryzen AI MAX+ 395, gfx1150) |
-| OS | Ubuntu 24.04 |
-| ROCm | 7.2.x がインストール済み (`/opt/rocm` から参照可能) |
-| Python | 3.10 (Ubuntu 24.04 標準は 3.12 なので別途インストール) |
+| マシン | HX370 PC 等 (Ryzen AI 9 HX 370, gfx1150) |
+| OS | Ubuntu 26.04 (24.04 でも可) |
+| GPU ドライバ | ディストロカーネルの in-tree `amdgpu`/KFD だけでよい |
+| ROCm | **システムへのインストールは不要**。PyTorch wheel が自前のランタイムを同梱する |
+| Python | 3.14 (Ubuntu 26.04 標準)。3.12 / 3.13 の wheel もある |
 | USB カメラ | V4L2 で認識される単眼カメラ (`/dev/video0` 等) |
-| ブラウザ | Google Chrome (NucBox 本体 or LAN 内別マシン) |
+| ブラウザ | Google Chrome (HX370 本体 or LAN 内別マシン) |
 
-**ROCm 7.2.x が `/opt/rocm` 配下にインストールされていること**, および
-**カメラが `ls /dev/video*` で見えること**が前提です。
+**GPU がカーネルから見えていること** (`ls /dev/kfd /dev/dri` が通る) と
+**カメラが `ls /dev/video*` で見えること**が前提です。システム全体の
+`/opt/rocm` があっても構いませんが、本プロジェクトは使いません。
 
 ---
 
@@ -39,57 +49,48 @@ cd RealtimeDepth
 
 ---
 
-## 2. Python 3.10 を入れる
+## 2. Python の確認
 
-Ubuntu 24.04 の標準は Python 3.12 です。本プロジェクトは
-onnxruntime-migraphx の cp310 wheel を使う都合で **3.10 が必須** です。
+Ubuntu 26.04 の標準は Python 3.14 で、本プロジェクトもこれを使います。
+gfx1150 の wheel は **cp312 / cp313 / cp314** 向けが存在します。この範囲なら
+どれでも構いませんが、**cp310 の wheel は存在しない**ので 3.10 では動きません。
 
 ```bash
-sudo add-apt-repository -y ppa:deadsnakes/ppa
-sudo apt update
-sudo apt install -y python3.10 python3.10-venv python3.10-dev
-python3.10 --version    # 3.10.x が出ること
+python3.14 --version    # 3.14.x が出ること
 ```
 
 ---
 
-## 3. venv と Python 依存パッケージ
+## 3. ROCm 10 の Python 環境
+
+AMD 公式の ROCm 10.0.0 用 PyTorch 2.13.0 / torchvision 0.28.0 を使用します。
+`device-gfx1150` extra で Radeon 890M 用カーネルを導入します。
 
 ```bash
-python3.10 -m venv .venv
-source .venv/bin/activate
-pip install --upgrade pip wheel setuptools
-
-# PyTorch (ONNX エクスポート用なので CPU 版で OK)
-pip install --index-url https://download.pytorch.org/whl/cpu torch torchvision
-
-# ONNX 変換 + ROCm 7.2.1 向け onnxruntime
-pip install onnx onnxscript
-pip install -f https://repo.radeon.com/rocm/manylinux/rocm-rel-7.2.1/ onnxruntime-migraphx
-
-# 画像処理 / Web サーバー / その他
-pip install opencv-python flask pyyaml huggingface_hub
+bash setup_rocm10.sh
+.venv-rocm10/bin/python test_inference.py
+./start_all.sh
 ```
 
-確認:
+`uv` と Python 3.14 が必要です。セットアップは `.venv-rocm10` を作成し、
+旧 `.venv-torch` は変更しません。別環境は `VENV_DIR` で指定できます
+（セットアップ・起動の両方で同じ値を指定）。
 
-```bash
-python -c "import onnxruntime as ort; print(ort.get_available_providers())"
-# → ['MIGraphXExecutionProvider', 'CPUExecutionProvider'] が出れば OK
-```
+依存バージョンと配布先は `requirements-rocm10.txt` に固定しています。
+ROCm 7 の旧 index ではなく `https://stable.repo.amd.com/rocm/whl-next/` を使用します。
+`HSA_OVERRIDE_GFX_VERSION` は設定せず、`runtime.device: cuda` を使います。
+システムの `/opt/rocm` の更新だけでは Python の HIP ランタイムは更新されません。
+GPU 実行には `/dev/kfd` と `/dev/dri` へのアクセスが必要です。
 
-> **注意**: `onnxruntime-rocm` (PyPI 版) は ROCm 6.x ビルドのため ROCm 7.x
-> では動きません。必ず上記の AMD 公式リポジトリから
-> `onnxruntime-migraphx` を入れてください。詳細は
-> [TECHNICALJ.md](./TECHNICALJ.md) の該当節を参照。
+[AMD PyTorch installation](https://rocm.docs.amd.com/projects/ai-ecosystem/en/latest/frameworks/pytorch/install.html)
 
 ---
 
 ## 4. Depth-Anything-V2 のクローンとモデル取得
 
-公式リポジトリは大きいので `$HOME` 直下にクローンし、本プロジェクトには
-シンボリックリンクで参照します (本リポジトリの `Depth-Anything-V2` は
-`~/Depth-Anything-V2` を指す symlink です)。
+公式リポジトリは大きいので本プロジェクトの外にクローンし、シンボリック
+リンクで参照します。`app.py` はそのパスを `sys.path` に追加して
+`depth_anything_v2` パッケージを import し、配下の `.pth` を読み込みます。
 
 ```bash
 cd ~
@@ -98,60 +99,52 @@ cd Depth-Anything-V2
 mkdir -p checkpoints
 wget -O checkpoints/depth_anything_v2_vits.pth \
   https://huggingface.co/depth-anything/Depth-Anything-V2-Small/resolve/main/depth_anything_v2_vits.pth
-
-# 本プロジェクトから参照できるよう symlink を確認
-ls -l ~/RealtimeDepth/Depth-Anything-V2
-# → ~/Depth-Anything-V2 を指している symlink ならOK
-# 無ければ:
-#   ln -s ~/Depth-Anything-V2 ~/RealtimeDepth/Depth-Anything-V2
 ```
+
+**symlink は各自で作成してください。** これは意図的に git の管理対象から
+外しています。リンク先がマシンごとに異なる絶対パスになるため、コミットすると
+他のチェックアウトで必ず壊れるからです。
+
+```bash
+ln -s ~/Depth-Anything-V2 ~/RealtimeDepth/Depth-Anything-V2
+
+# 解決できること・チェックポイントが見えることを確認
+ls -l ~/RealtimeDepth/Depth-Anything-V2
+ls ~/RealtimeDepth/Depth-Anything-V2/checkpoints/
+```
+
+symlink ではなく公式リポジトリを `~/RealtimeDepth/` 直下に直接クローンしても
+構いません。`config.yaml` の `model.repo` は config からの相対パスにすぎない
+ためです。いずれの場合も `Depth-Anything-V2` という名前は gitignore 済みです。
 
 ---
 
-## 5. ONNX エクスポート
+## 5. config.yaml のモデル設定を確認
 
-`~/Depth-Anything-V2/export_onnx.py` を以下の内容で作成:
+**ONNX エクスポートの手順はありません。** `app.py` が symlink 経由で公式の
+`depth_anything_v2` パッケージを直接 import し、`.pth` チェックポイントを
+読み込みます。既定値は手順 4 でダウンロードしたものと一致しているはずです:
 
-```python
-import torch
-from depth_anything_v2.dpt import DepthAnythingV2
+```yaml
+model:
+  repo: Depth-Anything-V2                # 手順 4 の symlink
+  encoder: vits                          # vits / vitb / vitl / vitg
+  checkpoint: Depth-Anything-V2/checkpoints/depth_anything_v2_vits.pth
+  input_size: 518                        # 14 の倍数であること
 
-model_configs = {
-    'vits': {'encoder': 'vits', 'features': 64,
-             'out_channels': [48, 96, 192, 384]},
-}
-
-encoder = 'vits'
-model = DepthAnythingV2(**model_configs[encoder])
-model.load_state_dict(torch.load(
-    f'checkpoints/depth_anything_v2_{encoder}.pth', map_location='cpu'))
-model.eval()
-
-INPUT_SIZE = 518
-dummy_input = torch.randn(1, 3, INPUT_SIZE, INPUT_SIZE)
-
-torch.onnx.export(
-    model, dummy_input,
-    f'../RealtimeDepth/depth_anything_v2_vits_{INPUT_SIZE}.onnx',
-    input_names=['input'], output_names=['depth'],
-    opset_version=17,
-    dynamic_axes={'input': {0: 'batch'}, 'depth': {0: 'batch'}},
-    dynamo=False,    # ← MIGraphX が opset 18 の Resize 属性を未対応のため必須
-)
+runtime:
+  device: cuda        # ROCm の HIP 層が CUDA API を受けるので gfx1150 でも "cuda" が正しい
+  precision: fp16     # fp16 / fp32
+  compile: false      # torch.compile。下記参照
 ```
 
-実行:
+パスは `config.yaml` からの相対で解決されます。より大きな encoder を使う
+場合は `encoder` と `checkpoint` の **両方** を変更し、対応する `.pth` を
+ダウンロードしてください。
 
-```bash
-cd ~/Depth-Anything-V2
-source ~/RealtimeDepth/.venv/bin/activate
-python export_onnx.py
-ls -lh ~/RealtimeDepth/depth_anything_v2_vits_518.onnx   # ~95 MB
-```
-
-> `dynamo=False` を入れずに export すると MIGraphX が Resize op の
-> `keep_aspect_ratio_policy` 属性を解釈できず実行時に落ちます。詳細は
-> [TECHNICALJ.md](./TECHNICALJ.md) を参照。
+`compile: true` にすると `torch.compile(mode="reduce-overhead")` が有効に
+なります。起動時にコンパイル時間が必要なため、既定は off です。
+HX370 実機で計測してから有効化してください。
 
 ---
 
@@ -230,19 +223,25 @@ cd ~/RealtimeDepth
 
 実行されること:
 
-1. venv activation + `HSA_OVERRIDE_GFX_VERSION=11.5.0` を内部設定
+1. `.venv-rocm10` を activate し、`HSA_OVERRIDE_GFX_VERSION` を `unset`
 2. `app.py` をバックグラウンド起動 (PID は `.depth_app.pid` に保存)
-3. 初回は MIGraphX のコンパイル待ち (~110 秒)、2回目以降は ~3 秒
+3. モデルロード + GPU ウォームアップ待ち (約 7 秒。`runtime.compile` が
+   有効なら 1〜2 分)
 4. 起動完了後、Chrome を新規ウィンドウで `http://localhost:8000/` に開く
 
 期待出力:
 
 ```
 started (pid 12345), log: /home/test/RealtimeDepth/depth_app.log
-waiting for ready (cold start ~110s, cached ~3s)...
+waiting for ready (model load + warmup ~10s; torch.compile 有効時は 1〜2 分)...
 ready (camera: 2K USB Camera). open http://localhost:8000/ or http://172.23.0.7:8000/
 launching Chrome...
 ```
+
+なお起動のたびに以下の無害な警告がログに出ますが、動作に影響はありません:
+`xFormers not available` (DINOv2 の optional import)、
+`xnack 'Off' was requested for a processor that does not support it`、
+MIOpen の `gfx1150_20.HIP.fdb.txt` が読めないという警告。
 
 登録済みカメラが1台も接続されていない場合もアプリは起動し、メッセージは
 `ready (no camera connected; serving placeholder)` になります。カメラを
@@ -265,7 +264,7 @@ PID ファイル経由で `SIGTERM`、10 秒待って残ったら `SIGKILL`。
 
 ## 9. LAN 内別マシン (Mac 等) からアクセスする場合
 
-NucBox の IP を確認:
+HX370 の IP を確認:
 
 ```bash
 ip route get 1.1.1.1 | awk '/src/ {print $7}'
@@ -277,7 +276,7 @@ ufw が active なら穴開け:
 sudo ufw allow 8000/tcp
 ```
 
-Mac の Chrome から `http://<NucBoxのIP>:8000/` でアクセス。
+Mac の Chrome から `http://<HX370のIP>:8000/` でアクセス。
 
 ---
 
@@ -285,10 +284,11 @@ Mac の Chrome から `http://<NucBoxのIP>:8000/` でアクセス。
 
 | 症状 | 確認・対処 |
 | --- | --- |
-| `ROCMExecutionProvider` が出ない | 想定通り。本プロジェクトは `MIGraphXExecutionProvider` を使います |
-| MIGraphX のコンパイルが毎回走る | `config.yaml` の `runtime.compile_cache_dir` が書き込み可能か確認 |
+| `hipErrorInvalidImage` / `kpack_load_code_object failed with error: 13` | wheel を `stable.repo.amd.com/rocm/whl-next/` ではなく `download.pytorch.org` から入れている。手順 3 で入れ直す |
+| `RuntimeError: operator torchvision::nms does not exist` | torch と torchvision のバージョン不一致。組で固定する (torch 2.13.0 ↔ torchvision 0.28.0) |
+| `torch.cuda.is_available()` が `False` | `ls /dev/kfd /dev/dri` の確認と、ユーザーが `render` / `video` グループに入っているか確認。`HSA_OVERRIDE_GFX_VERSION` が export されて**いない**ことも確認 |
 | 「NO CAMERA」プレースホルダから変わらない | 登録済みカメラが未接続。`ls /dev/v4l/by-id/` で `camera.devices` のいずれかに一致するパスがあるか、別アプリが占有していないか確認 |
 | Chrome が自動起動しない | `DISPLAY` / `WAYLAND_DISPLAY` 不在 (SSH 等)。表示された URL を手動で開く |
-| FPS が出ない | `./stop_all.sh && rm -rf .migraphx_cache && ./start_all.sh` でキャッシュ再生成、`rocm-smi` で GPU 使用率確認 |
+| FPS が出ない | `.venv-rocm10/bin/python test_inference.py` で推論単体を切り分ける (性能はメモリ帯域や電力設定に依存します)。`rocm-smi` で GPU 使用率を確認し、`runtime.precision` が `fp32` になっていないか確認 |
 
 より詳細なトラブルシュートは [TECHNICALJ.md](./TECHNICALJ.md) を参照。

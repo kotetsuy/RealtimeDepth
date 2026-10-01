@@ -16,8 +16,8 @@
       .title { font-weight:600; font-size:14px; }
       .lane-title { font-weight:700; font-size:13px; }
       .small { font-size:11px; fill:#555; }
-      line.flow { stroke:#333; stroke-width:1.2; fill:none; }
-      line.signal { stroke:#1a73e8; stroke-width:1.5; fill:none; stroke-dasharray:5 3; }
+      .flow { stroke:#333; stroke-width:1.2; fill:none; }
+      .signal { stroke:#1a73e8; stroke-width:1.5; fill:none; stroke-dasharray:5 3; }
     </style>
   </defs>
 
@@ -43,7 +43,7 @@
   <text x="180" y="166" text-anchor="middle">preprocess(frame)</text>
 
   <rect class="workerbox" x="60" y="192" width="240" height="32" rx="4"/>
-  <text x="180" y="212" text-anchor="middle">session.run(ONNX)  ← MIGraphX</text>
+  <text x="180" y="212" text-anchor="middle">model(tensor)  ← PyTorch/ROCm</text>
 
   <rect class="workerbox" x="60" y="238" width="240" height="32" rx="4"/>
   <text x="180" y="258" text-anchor="middle">depth_to_colormap + hstack</text>
