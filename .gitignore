@@ -239,3 +239,8 @@ depth_app.log
 # ROCm 10 environment and local installer cache
 .venv-rocm10/
 .cache/
+.downloads/
+.python/
+.venv-rocm10-windows/
+.venv-rocm72-windows/
+.windows-state/

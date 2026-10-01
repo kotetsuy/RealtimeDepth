@@ -11,71 +11,18 @@ import time
 import cv2
 import numpy as np
 from runtime import configure_runtime
+from camera import load_camera_configs, find_connected_camera, device_present
 import torch
 import yaml
 from flask import Flask, Response, render_template_string
 
 # === 設定の読み込み ===
 CONFIG_PATH = os.environ.get('CONFIG_PATH', os.path.join(os.path.dirname(__file__), 'config.yaml'))
-with open(CONFIG_PATH, 'r') as f:
+with open(CONFIG_PATH, 'r', encoding='utf-8') as f:
     CONFIG = yaml.safe_load(f)
 
 BASE_DIR = os.path.dirname(os.path.abspath(CONFIG_PATH))
 INPUT_SIZE = CONFIG['model']['input_size']
-
-
-class CameraConfig:
-    """1 台分のカメラ設定。"""
-
-    def __init__(self, device, width, height, fps, name=None):
-        self.device = device  # int (V4L2 index) または str (デバイスパス)
-        self.width = width
-        self.height = height
-        self.fps = fps
-        self.name = name or str(device)
-
-    def device_path(self):
-        """存在確認に使う実ファイルパス。整数指定は /dev/video{N} に対応付ける。"""
-        if isinstance(self.device, int):
-            return f'/dev/video{self.device}'
-        return str(self.device)
-
-    def __repr__(self):
-        return f'<CameraConfig {self.name!r} device={self.device!r}>'
-
-
-def load_camera_configs(config):
-    """config['camera'] を CameraConfig のリストへ正規化する。
-
-    新形式 (camera.devices リスト) と旧形式 (camera.device 直書き) の両方に対応。
-    """
-    cam = config['camera']
-    defaults = cam.get('defaults', {})
-    default_w = defaults.get('width', 640)
-    default_h = defaults.get('height', 480)
-    default_fps = defaults.get('fps', 30)
-
-    if 'devices' in cam:
-        entries = cam['devices']
-    else:
-        # 旧形式: 単一指定を 1 要素リストへ正規化。
-        entries = [{
-            'device': cam['device'],
-            'width': cam.get('width', default_w),
-            'height': cam.get('height', default_h),
-            'fps': cam.get('fps', default_fps),
-        }]
-
-    configs = []
-    for entry in entries:
-        configs.append(CameraConfig(
-            device=entry['device'],
-            width=entry.get('width', default_w),
-            height=entry.get('height', default_h),
-            fps=entry.get('fps', default_fps),
-            name=entry.get('name'),
-        ))
-    return configs
 
 
 CAMERA_CONFIGS = load_camera_configs(CONFIG)
@@ -102,6 +49,10 @@ if INPUT_SIZE % 14 != 0:
 # ModuleNotFoundError より先に、何をすればよいか分かるエラーを出す。
 DAV2_REPO = os.path.abspath(os.path.join(BASE_DIR, CONFIG['model']['repo']))
 if not os.path.isdir(os.path.join(DAV2_REPO, 'depth_anything_v2')):
+    if os.name == 'nt':
+        raise SystemExit(
+            f'Depth Anything V2 source missing: {DAV2_REPO}\n'
+            f'git clone https://github.com/DepthAnything/Depth-Anything-V2.git "{DAV2_REPO}"')
     raise SystemExit(
         f'Depth Anything V2 のリポジトリが見つかりません: {DAV2_REPO}\n'
         'このパスは環境依存のため git 管理外です。README の手順 4 に従って\n'
@@ -123,6 +74,14 @@ ENCODER_CONFIGS = {
 ENCODER = CONFIG['model']['encoder']
 CHECKPOINT = os.path.abspath(os.path.join(BASE_DIR, CONFIG['model']['checkpoint']))
 if not os.path.isfile(CHECKPOINT):
+    if os.name == 'nt':
+        size = {'vits': 'Small', 'vitb': 'Base', 'vitl': 'Large', 'vitg': 'Giant'}[ENCODER]
+        raise SystemExit(
+            f'Checkpoint missing: {CHECKPOINT}\n'
+            f'New-Item -ItemType Directory -Force "{os.path.dirname(CHECKPOINT)}"\n'
+            f'Invoke-WebRequest -Uri "https://huggingface.co/depth-anything/'
+            f'Depth-Anything-V2-{size}/resolve/main/depth_anything_v2_{ENCODER}.pth" '
+            f'-OutFile "{CHECKPOINT}"')
     raise SystemExit(
         f'チェックポイントが見つかりません: {CHECKPOINT}\n'
         'README の手順 4 に従ってダウンロードしてください:\n'
@@ -191,38 +150,6 @@ def depth_to_colormap(depth, target_shape):
         norm = (norm * 255).astype(np.uint8)
 
     return cv2.applyColorMap(norm, cv2.COLORMAP_INFERNO)
-
-
-def open_camera(cfg):
-    """CameraConfig を開いて検証する。成功時 VideoCapture、失敗時 None。"""
-    cap = cv2.VideoCapture(cfg.device, cv2.CAP_V4L2)
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, cfg.width)
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, cfg.height)
-    cap.set(cv2.CAP_PROP_FPS, cfg.fps)
-    if not cap.isOpened():
-        cap.release()
-        return None
-    # 「開けたが読めない」ケースを除外するため試し読みする。
-    ret, _ = cap.read()
-    if not ret:
-        cap.release()
-        return None
-    return cap
-
-
-def find_connected_camera(configs):
-    """登録カメラのうち接続されているものを先頭優先で 1 台開いて返す。
-
-    複数刺さっていてもリスト先頭に近いものだけを選ぶ。戻り値 (cfg, cap) / None。
-    """
-    for cfg in configs:
-        # まずパス存在を確認(存在しなければ open を試さず次へ)。
-        if not os.path.exists(cfg.device_path()):
-            continue
-        cap = open_camera(cfg)
-        if cap is not None:
-            return cfg, cap
-    return None
 
 
 def make_placeholder(message):
@@ -298,7 +225,7 @@ class DepthWorker:
             ret, frame = cap.read()
             if not ret:
                 read_fails += 1
-                if read_fails >= self.READ_FAIL_LIMIT or not os.path.exists(cfg.device_path()):
+                if read_fails >= self.READ_FAIL_LIMIT or not device_present(cfg):
                     print(f'[camera] disconnected: {cfg.name}, waiting...', flush=True)
                     cap.release()
                     cap = None

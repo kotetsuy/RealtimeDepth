@@ -13,9 +13,15 @@ def configure_runtime(config):
     if precision not in ('fp16', 'fp32'):
         raise ValueError('runtime.precision must be fp16 or fp32')
     if device.type == 'cuda':
+        setup = ('powershell -File setup_windows.ps1' if os.name == 'nt'
+                 else 'bash setup_rocm10.sh')
         if not torch.version.hip:
-            raise RuntimeError('ROCm PyTorch is required. Run bash setup_rocm10.sh')
+            raise RuntimeError(f'ROCm PyTorch is required. Run {setup}')
         if not torch.cuda.is_available():
+            if os.name == 'nt':
+                raise RuntimeError(
+                    'No HIP GPU available. Check the AMD Adrenalin driver and '
+                    f'Windows ROCm prerequisites; run {setup}.')
             raise RuntimeError(
                 'No HIP GPU available. Check /dev/kfd, /dev/dri and render/video '
                 'group permissions; run bash setup_rocm10.sh for ROCm 10 wheels.')

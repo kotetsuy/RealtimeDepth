@@ -1,0 +1,25 @@
+camera:
+  devices:
+    - name: USB Camera
+      device: 0
+  defaults:
+    backend: MSMF  # MSMF or DSHOW
+    width: 640
+    height: 480
+    fps: 30
+
+model:
+  repo: Depth-Anything-V2
+  encoder: vits
+  checkpoint: Depth-Anything-V2/checkpoints/depth_anything_v2_vits.pth
+  input_size: 518
+
+server:
+  host: 127.0.0.1
+  port: 8000
+  jpeg_quality: 80
+
+runtime:
+  device: cuda
+  precision: fp16
+  compile: false

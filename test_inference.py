@@ -14,7 +14,7 @@ import yaml
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.environ.get('CONFIG_PATH', os.path.join(BASE_DIR, 'config.yaml'))
-with open(CONFIG_PATH, 'r') as f:
+with open(CONFIG_PATH, 'r', encoding='utf-8') as f:
     CONFIG = yaml.safe_load(f)
 
 BASE_DIR = os.path.dirname(os.path.abspath(CONFIG_PATH))
@@ -57,7 +57,7 @@ if img is None:
     if not ret:
         # カメラも画像も無ければ合成画像でベンチだけ回す。
         print('No image source available; using a synthetic frame.')
-        img = (np.random.rand(480, 640, 3) * 255).astype(np.uint8)
+        img = (np.random.default_rng(0).random((480, 640, 3)) * 255).astype(np.uint8)
 
 
 def preprocess(bgr, size):
