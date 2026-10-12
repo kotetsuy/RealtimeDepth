@@ -229,6 +229,7 @@ __marimo__/
 .claude/
 
 # RealtimeDepth
+/videos/
 # Depth-Anything-V2 公式リポジトリへの symlink。指す先はマシンごとに違うため
 # トラッキングしない。セットアップ時に各自で作成する (README の手順 4)。
 /Depth-Anything-V2

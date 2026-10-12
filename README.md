@@ -208,12 +208,14 @@ recommended for reliable hot-plug detection.
 ### Hot-plug behaviour
 
 - **Auto-select on start**: the first connected camera from the list is
-  opened. If none is connected, the app still starts and serves a
-  "NO CAMERA" placeholder instead of crashing.
+  opened. If none is connected, the app loops through `videos/playlist.m3u8`.
+  It serves a "NO CAMERA" placeholder only when no video is playable.
 - **Unplug / replug while running**: if the active camera is removed,
-  the stream switches to the placeholder and the app keeps polling;
+  the stream switches to the playlist and the app keeps polling;
   when a registered camera is plugged back in it reconnects
   automatically — the browser MJPEG stream never drops.
+- **Video credits**: the current entry's `#CREDIT:` appears in small text
+  below the stream.
 - **Switching cameras**: to move to a different registered camera,
   unplug the current one; on the next scan the app re-selects the
   highest-priority connected camera.
@@ -253,8 +255,8 @@ a MIOpen note about a missing `gfx1151_20.HIP.fdb.txt` tuning database.
 None of them affect the run.
 
 If no registered camera is connected, the app still starts and the
-message reads `ready (no camera connected; serving placeholder)` — plug
-a camera in and the stream appears automatically.
+message reads `ready (no camera connected; serving video playlist if available)`.
+Plug in a camera to switch back automatically.
 
 You should see the original camera feed and the depth map (bright = near,
 dark = far) side-by-side in Chrome, with an FPS counter and the selected
