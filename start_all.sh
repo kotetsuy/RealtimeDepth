@@ -53,7 +53,8 @@ for _ in $(seq 1 60); do
       resp=$(curl -fs --max-time 1 "http://127.0.0.1:${PORT}/stats" 2>/dev/null || true)
       cam=$(printf '%s' "$resp" | sed -n 's/.*"camera":\s*"\([^"]*\)".*/\1/p')
     done
-    LAN_IP=$(ip route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="src"){print $(i+1); exit}}')
+    # LAN IP は案内表示用。ネットワーク未接続でも Chrome 起動へ進む。
+    LAN_IP=$(ip route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="src"){print $(i+1); exit}}' || true)
     URL="http://localhost:${PORT}/"
     if [[ -n "$cam" ]]; then
       echo "ready (camera: ${cam}). open ${URL} or http://${LAN_IP:-<host-ip>}:${PORT}/"
