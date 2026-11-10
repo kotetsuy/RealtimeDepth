@@ -14,6 +14,7 @@ from runtime import configure_runtime
 import torch
 import yaml
 from flask import Flask, Response, render_template_string
+from video_playlist import load_playlist
 
 # === 設定の読み込み ===
 CONFIG_PATH = os.environ.get('CONFIG_PATH', os.path.join(os.path.dirname(__file__), 'config.yaml'))
@@ -79,6 +80,7 @@ def load_camera_configs(config):
 
 
 CAMERA_CONFIGS = load_camera_configs(CONFIG)
+VIDEO_PLAYLIST = load_playlist(os.path.join(os.path.dirname(__file__), 'videos', 'playlist.m3u8'))
 
 JPEG_QUALITY = CONFIG['server']['jpeg_quality']
 HOST = CONFIG['server']['host']
@@ -239,10 +241,9 @@ def make_placeholder(message):
 
 
 class DepthWorker:
-    """カメラ接続をステートマシンで管理し、ホットプラグに追従する。
+    """カメラを優先し、未接続時は動画プレイリストをループ再生する。
 
-    DISCONNECTED <-> STREAMING を遷移。未接続中はプレースホルダを配信し続けるので
-    ブラウザの MJPEG ストリームは切れず、カメラを刺した瞬間に映像へ復帰する。
+    ブラウザの MJPEG ストリームを維持したまま入力元を切り替える。
     """
 
     SCAN_INTERVAL = 1.0   # 未接続時の再スキャン間隔 [s]
@@ -254,19 +255,28 @@ class DepthWorker:
         self.latest_jpeg = None
         self.fps = 0.0
         self.current_name = None  # 配信中のカメラ名 (未接続時 None)
+        self.source = None
+        self.credit = ''
         self.running = True
         self.thread = threading.Thread(target=self._loop, daemon=True)
         self.thread.start()
 
-    def _publish(self, jpg, fps=0.0, name=None):
+    def _publish(self, jpg, fps=0.0, name=None, source=None, credit=''):
         with self.lock:
             self.latest_jpeg = jpg
             self.fps = fps
             self.current_name = name
+            self.source = source
+            self.credit = credit
         self.frame_event.set()
 
     def _loop(self):
         cap = None
+        video_cap = None
+        video_entry = None
+        video_index = 0
+        video_interval = 1 / 30
+        next_video_frame = 0.0
         cfg = None
         fps_alpha = 0.9
         fps_avg = 0.0
@@ -275,56 +285,110 @@ class DepthWorker:
         last_scan = 0.0
 
         while self.running:
-            # === DISCONNECTED: 接続を待つ ===
+            # 動画再生中もカメラを定期的に探し、見つかればすぐ優先する。
             if cap is None:
-                now = time.time()
+                now = time.monotonic()
                 if now - last_scan >= self.SCAN_INTERVAL:
                     last_scan = now
                     found = find_connected_camera(CAMERA_CONFIGS)
                     if found is not None:
                         cfg, cap = found
+                        if video_cap is not None:
+                            video_cap.release()
+                            video_cap = None
                         fps_avg = 0.0
                         frame_idx = 0
                         read_fails = 0
                         print(f'[camera] connected: {cfg.name} ({cfg.device!r})', flush=True)
                         continue
-                self._publish(make_placeholder('Connect a camera registered in config.yaml'),
-                              fps=0.0, name=None)
-                time.sleep(0.2)
-                continue
 
-            # === STREAMING: 通常処理 ===
-            t0 = time.time()
-            ret, frame = cap.read()
-            if not ret:
-                read_fails += 1
-                if read_fails >= self.READ_FAIL_LIMIT or not os.path.exists(cfg.device_path()):
-                    print(f'[camera] disconnected: {cfg.name}, waiting...', flush=True)
-                    cap.release()
-                    cap = None
+                if video_cap is None and VIDEO_PLAYLIST:
+                    # 壊れた項目があっても後続の動画へ進む。
+                    for _ in range(len(VIDEO_PLAYLIST)):
+                        video_entry = VIDEO_PLAYLIST[video_index]
+                        video_index = (video_index + 1) % len(VIDEO_PLAYLIST)
+                        candidate = cv2.VideoCapture(str(video_entry.path))
+                        if candidate.isOpened():
+                            video_cap = candidate
+                            fps = candidate.get(cv2.CAP_PROP_FPS)
+                            video_interval = 1 / fps if 0 < fps <= 120 else 1 / 30
+                            next_video_frame = time.monotonic()
+                            fps_avg = 0.0
+                            frame_idx = 0
+                            print(f'[video] playing: {video_entry.path}', flush=True)
+                            break
+                        candidate.release()
+                        print(f'[video] cannot open: {video_entry.path}', flush=True)
+
+                if video_cap is None:
+                    self._publish(make_placeholder('No camera or playable video'), fps=0.0)
+                    time.sleep(0.2)
                     continue
-                time.sleep(0.01)
-                continue
-            read_fails = 0
+
+                remaining = next_video_frame - time.monotonic()
+                if remaining > 0:
+                    time.sleep(min(remaining, 0.05))
+                    continue
+
+                t0 = time.monotonic()
+                ret, frame = video_cap.read()
+                if not ret:
+                    video_cap.release()
+                    video_cap = None
+                    continue
+                next_video_frame += video_interval
+                source = 'video'
+                name = video_entry.title
+                credit = video_entry.credit
+            else:
+                t0 = time.monotonic()
+                ret, frame = cap.read()
+                if not ret:
+                    read_fails += 1
+                    if read_fails >= self.READ_FAIL_LIMIT or not os.path.exists(cfg.device_path()):
+                        print(f'[camera] disconnected: {cfg.name}, switching to playlist...', flush=True)
+                        cap.release()
+                        cap = None
+                        continue
+                    time.sleep(0.01)
+                    continue
+                read_fails = 0
+                source = 'camera'
+                name = cfg.name
+                credit = ''
 
             depth = infer(frame)
             colored = depth_to_colormap(depth, frame.shape)
 
             display = np.hstack([frame, colored])
 
-            dt = time.time() - t0
+            dt = time.monotonic() - t0
             inst_fps = 1.0 / max(dt, 1e-6)
             fps_avg = fps_alpha * fps_avg + (1 - fps_alpha) * inst_fps if frame_idx > 0 else inst_fps
-            cv2.putText(display, f'{fps_avg:.1f} FPS  {cfg.name}', (10, 30),
+            cv2.putText(display, f'{fps_avg:.1f} FPS  {name}', (10, 30),
                         cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 255, 0), 2)
 
             ok, jpg = cv2.imencode('.jpg', display, [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY])
             if ok:
-                self._publish(jpg.tobytes(), fps=fps_avg, name=cfg.name)
+                self._publish(jpg.tobytes(), fps=fps_avg,
+                              name=name if source == 'camera' else None,
+                              source=source, credit=credit)
             frame_idx += 1
+
+            if source == 'video':
+                # 推論が動画の FPS に追いつかない場合も再生時間を維持する。
+                skipped = max(0, int((time.monotonic() - next_video_frame) / video_interval))
+                for _ in range(skipped):
+                    if not video_cap.grab():
+                        video_cap.release()
+                        video_cap = None
+                        break
+                    next_video_frame += video_interval
 
         if cap is not None:
             cap.release()
+        if video_cap is not None:
+            video_cap.release()
 
     def get_jpeg(self):
         with self.lock:
@@ -332,7 +396,8 @@ class DepthWorker:
 
     def get_status(self):
         with self.lock:
-            return {'fps': round(self.fps, 2), 'camera': self.current_name}
+            return {'fps': round(self.fps, 2), 'camera': self.current_name,
+                    'source': self.source, 'credit': self.credit}
 
     def stop(self):
         self.running = False
@@ -369,6 +434,14 @@ INDEX_HTML = """
       font-size: 13px;
       color: #888;
     }
+    .credit {
+      max-width: 1280px;
+      margin: 10px auto 0;
+      font-size: 11px;
+      line-height: 1.4;
+      color: #999;
+      overflow-wrap: anywhere;
+    }
   </style>
 </head>
 <body>
@@ -377,6 +450,21 @@ INDEX_HTML = """
   <div class="legend">
     左: 元映像 / 右: 深度マップ (明=近い, 暗=遠い, 想定レンジ ~10m)
   </div>
+  <div id="credit" class="credit" aria-live="polite"></div>
+  <script>
+    async function updateCredit() {
+      try {
+        const response = await fetch('/stats', {cache: 'no-store'});
+        if (!response.ok) return;
+        const status = await response.json();
+        document.getElementById('credit').textContent =
+          status.source === 'video' && status.credit !== 'クレジット表記不要'
+            ? status.credit : '';
+      } catch (_) {}
+    }
+    updateCredit();
+    setInterval(updateCredit, 500);
+  </script>
 </body>
 </html>
 """

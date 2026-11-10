@@ -40,7 +40,7 @@ for _ in $(seq 1 60); do
     exit 1
   fi
   # /stats が 200 を返せばサーバ稼働 (モデルロードと warmup は Flask 起動前に完了している)。
-  # カメラ未接続でもプレースホルダ配信で稼働するため fps>0 は条件にしない。
+  # カメラ未接続でも動画またはプレースホルダを配信するため fps>0 は条件にしない。
   resp=$(curl -fs --max-time 1 "http://127.0.0.1:${PORT}/stats" 2>/dev/null || true)
   if [[ -n "$resp" ]]; then
     # サーバは Flask 起動直後に /stats を返すが、DepthWorker がカメラを
@@ -53,12 +53,13 @@ for _ in $(seq 1 60); do
       resp=$(curl -fs --max-time 1 "http://127.0.0.1:${PORT}/stats" 2>/dev/null || true)
       cam=$(printf '%s' "$resp" | sed -n 's/.*"camera":\s*"\([^"]*\)".*/\1/p')
     done
-    LAN_IP=$(ip route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="src"){print $(i+1); exit}}')
+    # LAN IP は案内表示用。ネットワーク未接続でも Chrome 起動へ進む。
+    LAN_IP=$(ip route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="src"){print $(i+1); exit}}' || true)
     URL="http://localhost:${PORT}/"
     if [[ -n "$cam" ]]; then
       echo "ready (camera: ${cam}). open ${URL} or http://${LAN_IP:-<host-ip>}:${PORT}/"
     else
-      echo "ready (no camera connected; serving placeholder). open ${URL} or http://${LAN_IP:-<host-ip>}:${PORT}/"
+      echo "ready (no camera connected; serving video playlist if available). open ${URL} or http://${LAN_IP:-<host-ip>}:${PORT}/"
     fi
 
     if [[ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]] && command -v google-chrome >/dev/null 2>&1; then
