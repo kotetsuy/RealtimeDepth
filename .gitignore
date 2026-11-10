@@ -239,4 +239,5 @@ depth_app.log
 
 # ROCm 10 environment and local installer cache
 .venv-rocm10/
+.venv-rocm10.1/
 .cache/

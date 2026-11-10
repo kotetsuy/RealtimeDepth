@@ -63,20 +63,20 @@ python3.14 --version    # 3.14.x が出ること
 
 ## 3. ROCm 10 の Python 環境
 
-AMD 公式の ROCm 10.0.0 用 PyTorch 2.13.0 / torchvision 0.28.0 を使用します。
+AMD 公式の ROCm 10.1.0 用 PyTorch 2.14.0 / torchvision 0.29.0a0 を使用します。
 `device-gfx1150` extra で Radeon 890M 用カーネルを導入します。
 
 ```bash
-bash setup_rocm10.sh
-.venv-rocm10/bin/python test_inference.py
+bash setup_rocm10.1.sh
+.venv-rocm10.1/bin/python test_inference.py
 ./start_all.sh
 ```
 
-`uv` と Python 3.14 が必要です。セットアップは `.venv-rocm10` を作成し、
-旧 `.venv-torch` は変更しません。別環境は `VENV_DIR` で指定できます
+`uv` と Python 3.14 が必要です。セットアップは `.venv-rocm10.1` を作成し、
+旧 `.venv-rocm10` は変更しません。別環境は `VENV_DIR` で指定できます
 （セットアップ・起動の両方で同じ値を指定）。
 
-依存バージョンと配布先は `requirements-rocm10.txt` に固定しています。
+依存バージョンと配布先は `requirements-rocm10.1.txt` に固定しています。
 ROCm 7 の旧 index ではなく `https://stable.repo.amd.com/rocm/whl-next/` を使用します。
 `HSA_OVERRIDE_GFX_VERSION` は設定せず、`runtime.device: cuda` を使います。
 システムの `/opt/rocm` の更新だけでは Python の HIP ランタイムは更新されません。
@@ -224,7 +224,7 @@ cd ~/RealtimeDepth
 
 実行されること:
 
-1. `.venv-rocm10` を activate し、`HSA_OVERRIDE_GFX_VERSION` を `unset`
+1. `.venv-rocm10.1` を activate し、`HSA_OVERRIDE_GFX_VERSION` を `unset`
 2. `app.py` をバックグラウンド起動 (PID は `.depth_app.pid` に保存)
 3. モデルロード + GPU ウォームアップ待ち (約 7 秒。`runtime.compile` が
    有効なら 1〜2 分)
@@ -286,10 +286,10 @@ Mac の Chrome から `http://<HX370のIP>:8000/` でアクセス。
 | 症状 | 確認・対処 |
 | --- | --- |
 | `hipErrorInvalidImage` / `kpack_load_code_object failed with error: 13` | wheel を `stable.repo.amd.com/rocm/whl-next/` ではなく `download.pytorch.org` から入れている。手順 3 で入れ直す |
-| `RuntimeError: operator torchvision::nms does not exist` | torch と torchvision のバージョン不一致。組で固定する (torch 2.13.0 ↔ torchvision 0.28.0) |
+| `RuntimeError: operator torchvision::nms does not exist` | torch と torchvision のバージョン不一致。組で固定する (torch 2.14.0 ↔ torchvision 0.29.0a0) |
 | `torch.cuda.is_available()` が `False` | `ls /dev/kfd /dev/dri` の確認と、ユーザーが `render` / `video` グループに入っているか確認。`HSA_OVERRIDE_GFX_VERSION` が export されて**いない**ことも確認 |
 | 「NO CAMERA」プレースホルダから変わらない | 登録済みカメラが未接続。`ls /dev/v4l/by-id/` で `camera.devices` のいずれかに一致するパスがあるか、別アプリが占有していないか確認 |
 | Chrome が自動起動しない | `DISPLAY` / `WAYLAND_DISPLAY` 不在 (SSH 等)。表示された URL を手動で開く |
-| FPS が出ない | `.venv-rocm10/bin/python test_inference.py` で推論単体を切り分ける (性能はメモリ帯域や電力設定に依存します)。`rocm-smi` で GPU 使用率を確認し、`runtime.precision` が `fp32` になっていないか確認 |
+| FPS が出ない | `.venv-rocm10.1/bin/python test_inference.py` で推論単体を切り分ける (性能はメモリ帯域や電力設定に依存します)。`rocm-smi` で GPU 使用率を確認し、`runtime.precision` が `fp32` になっていないか確認 |
 
 より詳細なトラブルシュートは [TECHNICALJ.md](./TECHNICALJ.md) を参照。

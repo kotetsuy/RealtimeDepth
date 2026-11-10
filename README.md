@@ -68,20 +68,20 @@ python3.14 --version    # expect 3.14.x
 
 ## 3. Python environment for ROCm 10
 
-Use AMD ROCm 10.0.0 builds of PyTorch 2.13.0 and torchvision 0.28.0.
+Use AMD ROCm 10.1.0 builds of PyTorch 2.14.0 and torchvision 0.29.0a0.
 The `device-gfx1150` extra installs Radeon 890M kernels.
 
 ```bash
-bash setup_rocm10.sh
-.venv-rocm10/bin/python test_inference.py
+bash setup_rocm10.1.sh
+.venv-rocm10.1/bin/python test_inference.py
 ./start_all.sh
 ```
 
-Requires `uv` and Python 3.14. Setup creates `.venv-rocm10` and leaves
-the old `.venv-torch` unchanged. Set `VENV_DIR` for a different environment
+Requires `uv` and Python 3.14. Setup creates `.venv-rocm10.1` and leaves
+the old `.venv-rocm10` unchanged. Set `VENV_DIR` for a different environment
 (use the same value during setup and launch).
 
-Versions and the AMD index are pinned in `requirements-rocm10.txt`.
+Versions and the AMD index are pinned in `requirements-rocm10.1.txt`.
 Use `https://stable.repo.amd.com/rocm/whl-next/` instead of the old ROCm 7 index.
 Leave `HSA_OVERRIDE_GFX_VERSION` unset and use `runtime.device: cuda`.
 Updating `/opt/rocm` alone does not update Python's HIP runtime.
@@ -234,7 +234,7 @@ cd ~/RealtimeDepth
 
 What this does:
 
-1. activates `.venv-rocm10` and `unset`s `HSA_OVERRIDE_GFX_VERSION`
+1. activates `.venv-rocm10.1` and `unset`s `HSA_OVERRIDE_GFX_VERSION`
 2. starts `app.py` in the background (PID written to `.depth_app.pid`)
 3. waits for the model load + GPU warmup (~7 s; 1–2 min if
    `runtime.compile` is on)
@@ -299,10 +299,10 @@ Then from your Mac's Chrome: `http://<HX370-IP>:8000/`.
 | Symptom | What to check |
 | --- | --- |
 | `hipErrorInvalidImage` / `kpack_load_code_object failed with error: 13` | The wheel came from `download.pytorch.org` instead of `stable.repo.amd.com/rocm/whl-next/`. Reinstall per step 3. |
-| `RuntimeError: operator torchvision::nms does not exist` | torch/torchvision version mismatch. Pin them as a pair (torch 2.13.0 ↔ torchvision 0.28.0). |
+| `RuntimeError: operator torchvision::nms does not exist` | torch/torchvision version mismatch. Pin them as a pair (torch 2.14.0 ↔ torchvision 0.29.0a0). |
 | `torch.cuda.is_available()` is `False` | Check `ls /dev/kfd /dev/dri` and that your user is in the `render` / `video` groups. Also make sure `HSA_OVERRIDE_GFX_VERSION` is **not** exported. |
 | Stream stuck on the "NO CAMERA" placeholder | No registered camera is connected. Run `ls /dev/v4l/by-id/` and confirm a path matching a `camera.devices` entry exists and no other app is holding the device. |
 | Chrome doesn't auto-launch | `DISPLAY` / `WAYLAND_DISPLAY` is missing (e.g., over SSH). Open the printed URL manually. |
-| Low FPS | Run `.venv-rocm10/bin/python test_inference.py` to isolate inference from camera I/O (performance depends on memory bandwidth and power settings). Watch `rocm-smi` for GPU utilization, and confirm `runtime.precision` is `fp16`, not `fp32`. |
+| Low FPS | Run `.venv-rocm10.1/bin/python test_inference.py` to isolate inference from camera I/O (performance depends on memory bandwidth and power settings). Watch `rocm-smi` for GPU utilization, and confirm `runtime.precision` is `fp16`, not `fp32`. |
 
 For deeper diagnostics, see [TECHNICAL.md](./TECHNICAL.md).

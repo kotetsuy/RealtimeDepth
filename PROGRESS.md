@@ -216,3 +216,8 @@ MIGraphX の ~110 秒の初回 JIT コンパイルと `.migraphx_cache` が不�
 - start_all.sh で Jieli Camera の接続を確認。HTTP `/`、`/stats`、`/stream` が成功し、JPEG を (480,1280,3) にデコード。起動直後の stats は 9.16 FPS（定常性能の測定ではない）。検証用サーバーは停止済み。
 - bash 構文、Python コンパイル、uv pip check、git diff --check を確認。
 - TECHNICAL 文書内の gfx1151 の歴史的測定値は元機種の記録として保持。
+
+## ROCm 10.1 migration (2026-11-10)
+
+- Added a separate `.venv-rocm10.1` setup with PyTorch 2.14.0 and torchvision 0.29.0a0 for gfx1150; the ROCm 10.0 environment remains available.
+- Dependency check passed. On Radeon 890M (gfx1150), synthetic-frame fp16 inference completed at 38.7 ms/frame (25.8 FPS); PyTorch reports HIP 7.16.26385. Camera input was unavailable during this test.

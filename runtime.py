@@ -14,11 +14,11 @@ def configure_runtime(config):
         raise ValueError('runtime.precision must be fp16 or fp32')
     if device.type == 'cuda':
         if not torch.version.hip:
-            raise RuntimeError('ROCm PyTorch is required. Run bash setup_rocm10.sh')
+            raise RuntimeError('ROCm PyTorch is required. Run bash setup_rocm10.1.sh')
         if not torch.cuda.is_available():
             raise RuntimeError(
                 'No HIP GPU available. Check /dev/kfd, /dev/dri and render/video '
-                'group permissions; run bash setup_rocm10.sh for ROCm 10 wheels.')
+                'group permissions; run bash setup_rocm10.1.sh for ROCm 10 wheels.')
         if device.index is None:
             device = torch.device('cuda', torch.cuda.current_device())
         torch.cuda.set_device(device)
