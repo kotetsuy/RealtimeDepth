@@ -61,6 +61,18 @@ python3.14 --version    # 3.14.x が出ること
 
 ## 3. ROCm 10 の Python 環境
 
+### ROCm 10.2
+
+gfx1151 向けの AMD 正式版 wheel を別環境に導入できます。既存の 10.0 環境は維持されます。
+
+```bash
+bash setup_rocm10.2.sh
+.venv-rocm10.2/bin/python test_inference.py
+./start_all.sh
+```
+
+Python 3.14 と `uv` が必要です。wheel のバージョンは `requirements-rocm10.2.txt` で固定しています。以下は従来の ROCm 10.0 の手順です。
+
 AMD 公式の ROCm 10.0.0 用 PyTorch 2.13.0 / torchvision 0.28.0 を使用します。
 `device-gfx1151` extra で Radeon 8060S 用カーネルを導入します。
 
@@ -222,7 +234,7 @@ cd ~/RealtimeDepth
 
 実行されること:
 
-1. `.venv-rocm10` を activate し、`HSA_OVERRIDE_GFX_VERSION` を `unset`
+1. `.venv-rocm10.2` を activate し、`HSA_OVERRIDE_GFX_VERSION` を `unset`（`VENV_DIR` で別環境を指定可能）
 2. `app.py` をバックグラウンド起動 (PID は `.depth_app.pid` に保存)
 3. モデルロード + GPU ウォームアップ待ち (約 7 秒。`runtime.compile` が
    有効なら 1〜2 分)
@@ -288,6 +300,6 @@ Mac の Chrome から `http://<NucBoxのIP>:8000/` でアクセス。
 | `torch.cuda.is_available()` が `False` | `ls /dev/kfd /dev/dri` の確認と、ユーザーが `render` / `video` グループに入っているか確認。`HSA_OVERRIDE_GFX_VERSION` が export されて**いない**ことも確認 |
 | 「NO CAMERA」プレースホルダから変わらない | 登録済みカメラが未接続。`ls /dev/v4l/by-id/` で `camera.devices` のいずれかに一致するパスがあるか、別アプリが占有していないか確認 |
 | Chrome が自動起動しない | `DISPLAY` / `WAYLAND_DISPLAY` 不在 (SSH 等)。表示された URL を手動で開く |
-| FPS が出ない | `.venv-rocm10/bin/python test_inference.py` で推論単体を切り分ける (fp16 vits 518² で約 12 ms / 78 FPS が目安)。`rocm-smi` で GPU 使用率を確認し、`runtime.precision` が `fp32` になっていないか確認 |
+| FPS が出ない | `.venv-rocm10.2/bin/python test_inference.py` で推論単体を切り分ける。`rocm-smi` で GPU 使用率を確認し、`runtime.precision` が `fp32` になっていないか確認 |
 
 より詳細なトラブルシュートは [TECHNICALJ.md](./TECHNICALJ.md) を参照。

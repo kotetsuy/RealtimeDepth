@@ -1,6 +1,6 @@
 """推論単体のベンチマーク。app.py の設定 (config.yaml) をそのまま使う。
 
-    .venv-rocm10/bin/python test_inference.py
+    .venv-rocm10.2/bin/python test_inference.py
 """
 import os
 import sys

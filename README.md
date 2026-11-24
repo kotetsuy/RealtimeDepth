@@ -66,6 +66,18 @@ python3.14 --version    # expect 3.14.x
 
 ## 3. Python environment for ROCm 10
 
+### ROCm 10.2
+
+The AMD stable wheels for gfx1151 can be installed in a separate environment. The existing 10.0 environment remains available.
+
+```bash
+bash setup_rocm10.2.sh
+.venv-rocm10.2/bin/python test_inference.py
+./start_all.sh
+```
+
+Python 3.14 and `uv` are required. Wheel versions are pinned in `requirements-rocm10.2.txt`. The instructions below are for ROCm 10.0.
+
 Use AMD ROCm 10.0.0 builds of PyTorch 2.13.0 and torchvision 0.28.0.
 The `device-gfx1151` extra installs Radeon 8060S kernels.
 
@@ -233,7 +245,7 @@ cd ~/RealtimeDepth
 
 What this does:
 
-1. activates `.venv-rocm10` and `unset`s `HSA_OVERRIDE_GFX_VERSION`
+1. activates `.venv-rocm10.2` and `unset`s `HSA_OVERRIDE_GFX_VERSION` (set `VENV_DIR` to use another environment)
 2. starts `app.py` in the background (PID written to `.depth_app.pid`)
 3. waits for the model load + GPU warmup (~7 s; 1–2 min if
    `runtime.compile` is on)
@@ -302,6 +314,6 @@ Then from your Mac's Chrome: `http://<NucBox-IP>:8000/`.
 | `torch.cuda.is_available()` is `False` | Check `ls /dev/kfd /dev/dri` and that your user is in the `render` / `video` groups. Also make sure `HSA_OVERRIDE_GFX_VERSION` is **not** exported. |
 | Stream stuck on the "NO CAMERA" placeholder | No registered camera is connected. Run `ls /dev/v4l/by-id/` and confirm a path matching a `camera.devices` entry exists and no other app is holding the device. |
 | Chrome doesn't auto-launch | `DISPLAY` / `WAYLAND_DISPLAY` is missing (e.g., over SSH). Open the printed URL manually. |
-| Low FPS | Run `.venv-rocm10/bin/python test_inference.py` to isolate inference from camera I/O (expect ~12 ms / ~78 FPS at fp16 vits 518²). Watch `rocm-smi` for GPU utilization, and confirm `runtime.precision` is `fp16`, not `fp32`. |
+| Low FPS | Run `.venv-rocm10.2/bin/python test_inference.py` to isolate inference from camera I/O. Watch `rocm-smi` for GPU utilization, and confirm `runtime.precision` is `fp16`, not `fp32`. |
 
 For deeper diagnostics, see [TECHNICAL.md](./TECHNICAL.md).
