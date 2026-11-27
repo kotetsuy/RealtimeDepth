@@ -1,5 +1,7 @@
 # RealtimeDepth — Ubuntu 26.04 動作検証 進捗
 
+> この文書は以前の Depth Anything V2 単体の作業記録です。現在の両モデル対応と起動手順は [READMEJ.md](READMEJ.md)、技術的な変更は [TECHNICALJ.md](TECHNICALJ.md) を参照してください。
+
 ## 目的
 RealtimeDepth (Depth Anything V2 Small / gfx1151) を Ubuntu 26.04 / ROCm 7.14 環境で GPU 動作させる。
 

@@ -1,8 +1,14 @@
 # RealtimeDepth — 技術解説
 
-> ROCm 10 対応: 現在の導入手順は [READMEJ §3](READMEJ.md#3-rocm-10-の-python-環境) を参照。
-> PyTorch 2.13.0 / torchvision 0.28.0（ROCm 10.0.0、gfx1151 extra）、`.venv-rocm10` を使用します。
-> 以下の ROCm 7 パッケージ・導入コマンド・性能値は移行前の記録です。
+> 現在のセットアップと両モデルの操作は [READMEJ.md](READMEJ.md) を参照してください。以下の各節は主に Depth Anything V2 単体の時点を説明しており、図、設定例、導入手順、性能値には現行コードと異なる過去の記録が含まれます。
+
+## Depth Pro 2 の統合（2026-11）
+
+起動時に Depth Anything V2 を読み込み、Depth Pro 2 は初回選択時に読み込みます。`POST /model` で切り替えを要求し、`/stats` で要求中・使用中のモデルとロードエラーを返します。選択は全ブラウザークライアントで共有されます。Depth Pro 2 は unbuffered stream を使用し、モデル、入力元、フレームサイズの変更時に時系列履歴を初期化します。
+
+Depth Anything V2 は相対深度をフレームごとのパーセンタイルで正規化します。Depth Pro 2 は推定距離を `min_depth`〜`max_depth` の範囲で色付けします。`auto_range` が有効な場合、有効な深度のサンプルの 98 パーセンタイルまで上限を拡大します。上限の拡大は即時、縮小は徐々に行います。カラーバーには現在の範囲を表示し、非有限値と非正値は黒にします。両モデル間で色をそのまま比較することはできません。
+
+標準の仮想環境は `.venv-depthpro2`、それがなければ `.venv-rocm10.2` です。Depth Pro 2 のキャッシュは `.cache/torch`、ソースとライセンスは `vendor/depth-pro-2` にあります。Depth Anything V2 のソースと重みは別途設定します。標準設定は `~/RealtimeDepth2` を参照しません。GPU と実カメラの動作は実行環境に依存します。
 
 セットアップ手順は [READMEJ.md](./READMEJ.md) を参照。本書はアーキテクチャ、
 設計判断、パフォーマンス特性、トラブルシュートを扱います。
@@ -444,7 +450,7 @@ ONNX 経路では入力サイズや精度を変えるたびに再 export + 再�
 
 ```
 1. .depth_app.pid を確認 (多重起動防止)
-2. .venv-torch を activate, HSA_OVERRIDE_GFX_VERSION を unset
+2. VENV_DIR 指定時はその環境、未指定時は .venv-depthpro2 または .venv-rocm10.2 を activate、HSA_OVERRIDE_GFX_VERSION を unset
 3. config.yaml から PORT を読む (yaml.safe_load via venv の python)
 4. nohup python app.py > depth_app.log 2>&1 &
 5. /stats を 3 秒間隔で curl し、HTTP 200 が返るまで最長 180 秒待つ

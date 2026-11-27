@@ -28,6 +28,17 @@ model:
   # DPT ヘッドの制約で 14 の倍数であること (518 = 14 x 37)。
   input_size: 518
 
+depth_pro_2:
+  model: s                # s / b / l / h
+  precision: bf16         # bf16 / fp16 / fp32
+  width: 640
+  height: 480
+  window: 4
+  min_depth: 0.3          # 表示範囲 (m)
+  max_depth: 10.0
+  auto_range: true        # 遠景では表示上限を自動で拡大
+  # f_px: 500            # 入力画像の水平焦点距離。省略時は推定
+
 server:
   host: 0.0.0.0
   port: 8000

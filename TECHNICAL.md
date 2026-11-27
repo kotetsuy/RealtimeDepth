@@ -1,8 +1,14 @@
 # RealtimeDepth — technical notes
 
-> ROCm 10 update: see [README §3](README.md#3-python-environment-for-rocm-10) for current setup.
-> The runtime is PyTorch 2.13.0 / torchvision 0.28.0 (ROCm 10.0.0, gfx1151 extras) in `.venv-rocm10`.
-> ROCm 7 package details, installation commands and performance figures below are historical.
+> Current setup and both-model operation are documented in [README.md](README.md). The sections below primarily describe the earlier Depth Anything V2 implementation; diagrams, configuration examples, installation details and measurements are historical where they differ from the current code.
+
+## Depth Pro 2 integration (2026-11)
+
+The worker loads Depth Anything V2 at startup and loads Depth Pro 2 on first selection. `POST /model` requests a switch; `/stats` reports the requested and active model and load errors. The active model is shared by all browser clients. Depth Pro 2 uses an unbuffered stream and resets its temporal state when the model, input source or frame size changes.
+
+Depth Anything V2 uses per-frame percentile normalization for relative depth. Depth Pro 2 produces estimated metric depth; its color range starts at `min_depth`–`max_depth` and, with `auto_range` enabled, expands to the 98th percentile of valid sampled depths. Increases apply immediately, while decreases are smoothed. The color bar shows the current range; non-finite and non-positive values are black. These colors are not directly comparable between the two models.
+
+The default environment is `.venv-depthpro2` when available, otherwise `.venv-rocm10.2`. The default Depth Pro 2 cache is `.cache/torch`. Its source and licenses are under `vendor/depth-pro-2`; the Depth Anything V2 source and checkpoint are configured separately. The application does not use `~/RealtimeDepth2` by default. GPU and actual camera behavior depend on the host environment.
 
 For setup steps, see [README.md](./README.md). This document covers
 architecture, design decisions, performance characteristics, and
@@ -464,7 +470,7 @@ restart.
 
 ```
 1. Check .depth_app.pid (refuse double-starts)
-2. Activate .venv-torch, unset HSA_OVERRIDE_GFX_VERSION
+2. Activate VENV_DIR if set, otherwise .venv-depthpro2 if present or .venv-rocm10.2; unset HSA_OVERRIDE_GFX_VERSION
 3. Read PORT from config.yaml (yaml.safe_load via the venv's python)
 4. nohup python app.py > depth_app.log 2>&1 &
 5. Poll /stats every 3 s until it returns HTTP 200, with a 180 s budget

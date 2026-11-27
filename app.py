@@ -13,7 +13,7 @@ import numpy as np
 from runtime import configure_runtime
 import torch
 import yaml
-from flask import Flask, Response, render_template_string
+from flask import Flask, Response, render_template_string, request, jsonify
 from video_playlist import load_playlist
 
 # === 設定の読み込み ===
@@ -195,6 +195,18 @@ def depth_to_colormap(depth, target_shape):
     return cv2.applyColorMap(norm, cv2.COLORMAP_INFERNO)
 
 
+def draw_depth_scale(image, near, far):
+    """Depth Pro 2 の色と距離の対応を深度画像の左下に表示する。"""
+    height, width = image.shape[:2]
+    if width < 40 or height < 40:
+        return
+    bar_width = min(180, width - 20)
+    gradient = np.tile(np.linspace(255, 0, bar_width, dtype=np.uint8), (10, 1))
+    image[height - 20:height - 10, 10:10 + bar_width] = cv2.applyColorMap(gradient, cv2.COLORMAP_INFERNO)
+    cv2.putText(image, f'{near:g}m - {far:g}m', (10, height - 24),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1, cv2.LINE_AA)
+
+
 def open_camera(cfg):
     """CameraConfig を開いて検証する。成功時 VideoCapture、失敗時 None。"""
     cap = cv2.VideoCapture(cfg.device, cv2.CAP_V4L2)
@@ -257,6 +269,9 @@ class DepthWorker:
         self.current_name = None  # 配信中のカメラ名 (未接続時 None)
         self.source = None
         self.credit = ''
+        self.requested_model = 'anything'
+        self.active_model = 'anything'
+        self.model_error = ''
         self.running = True
         self.thread = threading.Thread(target=self._loop, daemon=True)
         self.thread.start()
@@ -283,6 +298,9 @@ class DepthWorker:
         frame_idx = 0
         read_fails = 0
         last_scan = 0.0
+        pro_model = pro_transform = pro_stream = None
+        pro_shape = pro_source = None
+        pro_far = None
 
         while self.running:
             # 動画再生中もカメラを定期的に探し、見つかればすぐ優先する。
@@ -293,6 +311,7 @@ class DepthWorker:
                     found = find_connected_camera(CAMERA_CONFIGS)
                     if found is not None:
                         cfg, cap = found
+                        pro_stream = None
                         if video_cap is not None:
                             video_cap.release()
                             video_cap = None
@@ -310,6 +329,7 @@ class DepthWorker:
                         candidate = cv2.VideoCapture(str(video_entry.path))
                         if candidate.isOpened():
                             video_cap = candidate
+                            pro_stream = None
                             fps = candidate.get(cv2.CAP_PROP_FPS)
                             video_interval = 1 / fps if 0 < fps <= 120 else 1 / 30
                             next_video_frame = time.monotonic()
@@ -335,6 +355,7 @@ class DepthWorker:
                 if not ret:
                     video_cap.release()
                     video_cap = None
+                    pro_stream = None
                     continue
                 next_video_frame += video_interval
                 source = 'video'
@@ -349,6 +370,7 @@ class DepthWorker:
                         print(f'[camera] disconnected: {cfg.name}, switching to playlist...', flush=True)
                         cap.release()
                         cap = None
+                        pro_stream = None
                         continue
                     time.sleep(0.01)
                     continue
@@ -357,8 +379,63 @@ class DepthWorker:
                 name = cfg.name
                 credit = ''
 
-            depth = infer(frame)
-            colored = depth_to_colormap(depth, frame.shape)
+            with self.lock:
+                selected = self.requested_model
+            if selected != self.active_model:
+                try:
+                    if selected == 'pro' and pro_model is None:
+                        from depth_pro_2 import create_model_and_transforms
+                        opts = CONFIG.get('depth_pro_2', {})
+                        dtype = {'bf16': torch.bfloat16, 'fp16': torch.float16, 'fp32': torch.float32}[opts.get('precision', 'bf16')]
+                        if DEVICE.startswith('cpu'):
+                            dtype = torch.float32
+                        pro_model, pro_transform = create_model_and_transforms('depthpro2-' + opts.get('model', 's'), device=DEVICE, precision=dtype)
+                        pro_model.eval()
+                    pro_stream = None
+                    pro_shape = pro_source = None
+                    pro_far = None
+                    with self.lock:
+                        self.active_model = selected
+                        self.model_error = ''
+                    fps_avg = 0.0
+                    frame_idx = 0
+                except Exception as exc:
+                    print(f'[model] Depth Pro 2 load failed: {exc}', flush=True)
+                    with self.lock:
+                        self.requested_model = self.active_model
+                        self.model_error = str(exc)
+                    selected = self.active_model
+            if selected == 'pro':
+                opts = CONFIG.get('depth_pro_2', {})
+                h, w = frame.shape[:2]
+                scale = min(opts.get('width', 640) / w, opts.get('height', 480) / h)
+                resized = cv2.resize(frame, (max(1, round(w * scale)), max(1, round(h * scale))), interpolation=cv2.INTER_AREA if scale < 1 else cv2.INTER_LINEAR)
+                source_key = (source, name, id(video_cap) if source == 'video' else id(cap))
+                if pro_stream is None or pro_shape != resized.shape or pro_source != source_key:
+                    fx = opts.get('f_px')
+                    pro_stream = pro_model.stream(window=opts.get('window', 4), f_px=fx * scale if fx is not None else None, mode='unbuffered')
+                    pro_shape, pro_source = resized.shape, source_key
+                    pro_far = None
+                with torch.inference_mode():
+                    depth = pro_stream.step(pro_transform(cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)))[0]['depth'].float().cpu().numpy()
+                depth = cv2.resize(depth, (w, h), interpolation=cv2.INTER_LINEAR)
+                valid = np.isfinite(depth) & (depth > 0)
+                norm = np.zeros(depth.shape, dtype=np.uint8)
+                near, far = opts.get('min_depth', .3), opts.get('max_depth', 10.)
+                if opts.get('auto_range', True):
+                    sample = depth[::4, ::4]
+                    sample = sample[np.isfinite(sample) & (sample > 0)]
+                    if sample.size:
+                        desired_far = max(far, float(np.percentile(sample, 98)))
+                        pro_far = desired_far if pro_far is None else max(desired_far, 0.95 * pro_far + 0.05 * desired_far)
+                        far = pro_far
+                norm[valid] = (255 * (1 - np.clip((depth[valid] - near) / (far - near), 0, 1))).astype(np.uint8)
+                colored = cv2.applyColorMap(norm, cv2.COLORMAP_INFERNO)
+                colored[~valid] = 0
+                draw_depth_scale(colored, near, far)
+            else:
+                depth = infer(frame)
+                colored = depth_to_colormap(depth, frame.shape)
 
             display = np.hstack([frame, colored])
 
@@ -397,7 +474,14 @@ class DepthWorker:
     def get_status(self):
         with self.lock:
             return {'fps': round(self.fps, 2), 'camera': self.current_name,
-                    'source': self.source, 'credit': self.credit}
+                    'source': self.source, 'credit': self.credit,
+                    'model': self.active_model, 'requested_model': self.requested_model,
+                    'model_error': self.model_error}
+
+    def select_model(self, name):
+        with self.lock:
+            self.requested_model = name
+            self.model_error = ''
 
     def stop(self):
         self.running = False
@@ -413,7 +497,7 @@ INDEX_HTML = """
 <html lang="ja">
 <head>
   <meta charset="utf-8">
-  <title>Depth Anything V2 - ROCm Realtime Demo</title>
+  <title>RealtimeDepth</title>
   <style>
     body {
       background: #111;
@@ -445,10 +529,12 @@ INDEX_HTML = """
   </style>
 </head>
 <body>
-  <h1>Depth Anything V2 Small / PyTorch ROCm / gfx1151</h1>
+  <h1>RealtimeDepth / PyTorch ROCm</h1>
+  <label>Depth Anything V2 <input id="model" type="range" min="0" max="1" step="1" value="0" aria-label="深度推定モデル"> Depth Pro 2</label>
+  <div id="model-status" aria-live="polite"></div>
   <img class="stream" src="/stream" alt="depth stream">
   <div class="legend">
-    左: 元映像 / 右: 深度マップ (明=近い, 暗=遠い, 想定レンジ ~10m)
+    左: 元映像 / 右: 深度マップ (明=近い、暗=遠い)
   </div>
   <div id="credit" class="credit" aria-live="polite"></div>
   <script>
@@ -457,11 +543,17 @@ INDEX_HTML = """
         const response = await fetch('/stats', {cache: 'no-store'});
         if (!response.ok) return;
         const status = await response.json();
+        document.getElementById('model').value = status.requested_model === 'pro' ? '1' : '0';
+        document.getElementById('model-status').textContent = status.model_error ? '切り替え失敗: ' + status.model_error : status.model !== status.requested_model ? 'モデルを読み込み中…' : status.model === 'pro' ? 'Depth Pro 2（推定距離はカラーバーを参照）' : 'Depth Anything V2（相対深度）';
         document.getElementById('credit').textContent =
           status.source === 'video' && status.credit !== 'クレジット表記不要'
             ? status.credit : '';
       } catch (_) {}
     }
+    document.getElementById('model').addEventListener('change', async (event) => {
+      await fetch('/model', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({model:event.target.value === '1' ? 'pro' : 'anything'})});
+      updateCredit();
+    });
     updateCredit();
     setInterval(updateCredit, 500);
   </script>
@@ -498,6 +590,16 @@ def stream():
 @app.route('/stats')
 def stats():
     return worker.get_status()
+
+
+@app.post('/model')
+def select_model():
+    data = request.get_json(silent=True) or {}
+    name = data.get('model')
+    if name not in ('anything', 'pro'):
+        return jsonify(error='invalid model'), 400
+    worker.select_model(name)
+    return jsonify(worker.get_status())
 
 
 if __name__ == '__main__':

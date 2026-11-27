@@ -1,8 +1,6 @@
 # RealtimeDepth — リアルタイム深度推定デモ (セットアップ手順書)
 
-Depth Anything V2 Small を AMD Ryzen AI MAX+ 395 (gfx1151 / Strix Halo) 上で
-**PyTorch (ROCm)** で動かし、USB カメラ映像を Chrome に MJPEG ストリーミング
-するデモです。
+Depth Anything V2 と Depth Pro 2 を AMD Ryzen AI MAX+ 395 (gfx1151) 上の PyTorch (ROCm) で実行し、USB カメラまたは動画の映像と深度マップをブラウザーに表示します。
 
 このドキュメントは **`git clone` から `./start_all.sh` でブラウザ表示が
 始まるところまで** の手順書です。技術的な内容は [TECHNICALJ.md](./TECHNICALJ.md)
@@ -61,17 +59,17 @@ python3.14 --version    # 3.14.x が出ること
 
 ## 3. ROCm 10 の Python 環境
 
-### ROCm 10.2
+### 両モデルを使う環境
 
-gfx1151 向けの AMD 正式版 wheel を別環境に導入できます。既存の 10.0 環境は維持されます。
+Python 3.14 と `uv` を用意し、両モデルの依存関係をインストールします。Depth Pro 2 のソースは `vendor/depth-pro-2` にあります。
 
 ```bash
-bash setup_rocm10.2.sh
-.venv-rocm10.2/bin/python test_inference.py
+bash setup_depthpro2.sh
+.venv-depthpro2/bin/python test_inference.py
 ./start_all.sh
 ```
 
-Python 3.14 と `uv` が必要です。wheel のバージョンは `requirements-rocm10.2.txt` で固定しています。以下は従来の ROCm 10.0 の手順です。
+`start_all.sh` は `.venv-depthpro2` を優先し、存在しない場合は `.venv-rocm10.2` を使用します。後者に Depth Pro 2 がインストールされていなければ切り替え時にエラーになります。`VENV_DIR` で別の環境を指定できます。以下は Depth Anything V2 用の従来の ROCm 10.0 の手順です。
 
 AMD 公式の ROCm 10.0.0 用 PyTorch 2.13.0 / torchvision 0.28.0 を使用します。
 `device-gfx1151` extra で Radeon 8060S 用カーネルを導入します。
@@ -79,7 +77,7 @@ AMD 公式の ROCm 10.0.0 用 PyTorch 2.13.0 / torchvision 0.28.0 を使用し�
 ```bash
 bash setup_rocm10.sh
 .venv-rocm10/bin/python test_inference.py
-./start_all.sh
+VENV_DIR="$PWD/.venv-rocm10" ./start_all.sh
 ```
 
 `uv` と Python 3.14 が必要です。セットアップは `.venv-rocm10` を作成し、
@@ -234,7 +232,7 @@ cd ~/RealtimeDepth
 
 実行されること:
 
-1. `.venv-rocm10.2` を activate し、`HSA_OVERRIDE_GFX_VERSION` を `unset`（`VENV_DIR` で別環境を指定可能）
+1. `.venv-depthpro2`（なければ `.venv-rocm10.2`）を activate し、`HSA_OVERRIDE_GFX_VERSION` を `unset`（`VENV_DIR` で別環境を指定可能）
 2. `app.py` をバックグラウンド起動 (PID は `.depth_app.pid` に保存)
 3. モデルロード + GPU ウォームアップ待ち (約 7 秒。`runtime.compile` が
    有効なら 1〜2 分)
@@ -260,6 +258,18 @@ MIOpen の `gfx1151_20.HIP.fdb.txt` が読めないという警告。
 
 Chrome に元映像と深度マップ (近=明 / 遠=暗) が横並びで表示され、
 左上に FPS と選択中のカメラ名が出れば成功です。
+
+---
+
+## モデルの切り替え
+
+ブラウザー上部のスライダーで Depth Anything V2 と Depth Pro 2 を切り替えます。Depth Anything V2 は相対深度、Depth Pro 2 は推定距離を表示します。Depth Pro 2 の表示範囲は初期値 0.3〜10 m で、遠景では上限を自動的に広げます。カラーバーに現在の範囲を表示します。`auto_range: false` にすると固定範囲になります。Depth Pro 2 は初回選択時に読み込まれます。モデル、精度、解像度、履歴長、表示距離は `config.yaml` の `depth_pro_2` で設定できます。推定距離の絶対精度は保証されません。
+
+`start_all.sh` は `.venv-depthpro2` がある場合、この環境と `.cache/torch` を使用します。Depth Pro 2 のソースとライセンスは `vendor/depth-pro-2` にあります。標準設定では `~/RealtimeDepth2` を参照しません。仮想環境のベース Python と Depth Anything V2 の公式リポジトリは、このフォルダの外に配置できます。環境を再作成する場合は `bash setup_depthpro2.sh` を実行してください。`VENV_DIR` と `TORCH_HOME` で別の環境やキャッシュを指定することもできます。コピー済み以外の重みは初回に取得が必要です。
+
+Depth Pro 2 のモデルは非商用の科学研究・学術開発用途に限定されています。使用前に公式ソースの `LICENSE_MODEL`、`LICENSE`、`ACKNOWLEDGEMENTS` を確認してください。
+
+Apple Machine Learning Research Model is licensed under the Apple Machine Learning Research Model License Agreement.
 
 ---
 
@@ -300,6 +310,6 @@ Mac の Chrome から `http://<NucBoxのIP>:8000/` でアクセス。
 | `torch.cuda.is_available()` が `False` | `ls /dev/kfd /dev/dri` の確認と、ユーザーが `render` / `video` グループに入っているか確認。`HSA_OVERRIDE_GFX_VERSION` が export されて**いない**ことも確認 |
 | 「NO CAMERA」プレースホルダから変わらない | 登録済みカメラが未接続。`ls /dev/v4l/by-id/` で `camera.devices` のいずれかに一致するパスがあるか、別アプリが占有していないか確認 |
 | Chrome が自動起動しない | `DISPLAY` / `WAYLAND_DISPLAY` 不在 (SSH 等)。表示された URL を手動で開く |
-| FPS が出ない | `.venv-rocm10.2/bin/python test_inference.py` で推論単体を切り分ける。`rocm-smi` で GPU 使用率を確認し、`runtime.precision` が `fp32` になっていないか確認 |
+| FPS が出ない | `.venv-depthpro2/bin/python test_inference.py` で推論単体を切り分ける。`rocm-smi` で GPU 使用率を確認し、`runtime.precision` が `fp32` になっていないか確認 |
 
 より詳細なトラブルシュートは [TECHNICALJ.md](./TECHNICALJ.md) を参照。

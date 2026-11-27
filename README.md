@@ -1,8 +1,6 @@
 # RealtimeDepth — realtime depth estimation demo (setup guide)
 
-A demo that runs Depth Anything V2 Small on an AMD Ryzen AI MAX+ 395
-(gfx1151 / Strix Halo) with **PyTorch on ROCm**, and streams depth-mapped
-USB camera footage to Chrome over MJPEG.
+A PyTorch ROCm demo for Depth Anything V2 and Depth Pro 2 on AMD Ryzen AI MAX+ 395 (gfx1151). It streams a USB camera or playlist video alongside its depth map to a browser.
 
 This document walks you from **`git clone` to `./start_all.sh` showing the
 stream in your browser**. For architecture and design rationale, see
@@ -66,17 +64,17 @@ python3.14 --version    # expect 3.14.x
 
 ## 3. Python environment for ROCm 10
 
-### ROCm 10.2
+### Environment for both models
 
 The AMD stable wheels for gfx1151 can be installed in a separate environment. The existing 10.0 environment remains available.
 
 ```bash
-bash setup_rocm10.2.sh
-.venv-rocm10.2/bin/python test_inference.py
+bash setup_depthpro2.sh
+.venv-depthpro2/bin/python test_inference.py
 ./start_all.sh
 ```
 
-Python 3.14 and `uv` are required. Wheel versions are pinned in `requirements-rocm10.2.txt`. The instructions below are for ROCm 10.0.
+Python 3.14 and `uv` are required. `setup_depthpro2.sh` installs the pinned ROCm 10.2 wheel pair and the source under `vendor/depth-pro-2`. The instructions below describe the older Depth Anything V2 environment.
 
 Use AMD ROCm 10.0.0 builds of PyTorch 2.13.0 and torchvision 0.28.0.
 The `device-gfx1151` extra installs Radeon 8060S kernels.
@@ -84,7 +82,7 @@ The `device-gfx1151` extra installs Radeon 8060S kernels.
 ```bash
 bash setup_rocm10.sh
 .venv-rocm10/bin/python test_inference.py
-./start_all.sh
+VENV_DIR="$PWD/.venv-rocm10" ./start_all.sh
 ```
 
 Requires `uv` and Python 3.14. Setup creates `.venv-rocm10` and leaves
@@ -245,7 +243,7 @@ cd ~/RealtimeDepth
 
 What this does:
 
-1. activates `.venv-rocm10.2` and `unset`s `HSA_OVERRIDE_GFX_VERSION` (set `VENV_DIR` to use another environment)
+1. activates `.venv-depthpro2` when present, otherwise `.venv-rocm10.2` and `unset`s `HSA_OVERRIDE_GFX_VERSION` (set `VENV_DIR` to use another environment)
 2. starts `app.py` in the background (PID written to `.depth_app.pid`)
 3. waits for the model load + GPU warmup (~7 s; 1–2 min if
    `runtime.compile` is on)
@@ -273,6 +271,18 @@ Plug in a camera to switch back automatically.
 You should see the original camera feed and the depth map (bright = near,
 dark = far) side-by-side in Chrome, with an FPS counter and the selected
 camera name overlaid in the top-left.
+
+---
+
+## Switching models
+
+Use the slider above the video to select Depth Anything V2 or Depth Pro 2. Depth Anything V2 displays relative depth; Depth Pro 2 estimates metric depth. Depth Pro 2 loads on first selection. Its color scale starts at 0.3–10 m and expands its upper limit for distant scenes. The color bar shows the current range; set `depth_pro_2.auto_range: false` in `config.yaml` for a fixed range. Estimated distances are not guaranteed to be accurate. Model size, precision, input size, window and range are configured under `depth_pro_2`.
+
+`start_all.sh` prefers `.venv-depthpro2`, falling back to `.venv-rocm10.2` if absent. The fallback must have Depth Pro 2 installed to use that model. `VENV_DIR` and `TORCH_HOME` override the environment and cache paths; the default cache is `.cache/torch`. Source and license files are in `vendor/depth-pro-2`. The Python interpreter backing the venv and the Depth Anything V2 repository may be outside this directory. `~/RealtimeDepth2` is not needed by the default setup. Model weights not already cached are downloaded on first use.
+
+Depth Pro 2 model weights are limited to noncommercial scientific research and academic development. Read `vendor/depth-pro-2/LICENSE_MODEL`, `LICENSE`, and `ACKNOWLEDGEMENTS` before use.
+
+Apple Machine Learning Research Model is licensed under the Apple Machine Learning Research Model License Agreement.
 
 ---
 
@@ -314,6 +324,6 @@ Then from your Mac's Chrome: `http://<NucBox-IP>:8000/`.
 | `torch.cuda.is_available()` is `False` | Check `ls /dev/kfd /dev/dri` and that your user is in the `render` / `video` groups. Also make sure `HSA_OVERRIDE_GFX_VERSION` is **not** exported. |
 | Stream stuck on the "NO CAMERA" placeholder | No registered camera is connected. Run `ls /dev/v4l/by-id/` and confirm a path matching a `camera.devices` entry exists and no other app is holding the device. |
 | Chrome doesn't auto-launch | `DISPLAY` / `WAYLAND_DISPLAY` is missing (e.g., over SSH). Open the printed URL manually. |
-| Low FPS | Run `.venv-rocm10.2/bin/python test_inference.py` to isolate inference from camera I/O. Watch `rocm-smi` for GPU utilization, and confirm `runtime.precision` is `fp16`, not `fp32`. |
+| Low FPS | Run `.venv-depthpro2/bin/python test_inference.py` to isolate inference from camera I/O. Watch `rocm-smi` for GPU utilization, and confirm `runtime.precision` is `fp16`, not `fp32`. |
 
 For deeper diagnostics, see [TECHNICAL.md](./TECHNICAL.md).

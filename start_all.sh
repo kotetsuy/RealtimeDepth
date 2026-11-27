@@ -12,7 +12,14 @@ if [[ -f "$PID_FILE" ]] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
 fi
 rm -f "$PID_FILE"
 
-VENV_DIR="${VENV_DIR:-$PWD/.venv-rocm10.2}"
+if [[ -z "${VENV_DIR:-}" ]]; then
+  if [[ -x "$PWD/.venv-depthpro2/bin/python" ]]; then
+    VENV_DIR="$PWD/.venv-depthpro2"
+  else
+    VENV_DIR="$PWD/.venv-rocm10.2"
+  fi
+fi
+export TORCH_HOME="${TORCH_HOME:-$PWD/.cache/torch}"
 if [[ ! -f "$VENV_DIR/bin/activate" ]]; then
   echo "Missing $VENV_DIR. Run bash setup_rocm10.2.sh first, or set VENV_DIR to an existing environment." >&2
   exit 1

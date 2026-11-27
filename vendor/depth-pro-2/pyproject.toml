@@ -1,0 +1,40 @@
+[project]
+name = "depth_pro_2"
+version = "0.1"
+description = "Depth Pro 2: Sharp and Temporally Consistent Metric Monocular Depth"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "av>=14.1",
+  "click",
+  "huggingface-hub>=1.0",
+  "matplotlib",
+  "numpy",
+  "pillow>=11.3",
+  "pillow-heif",
+  "timm>=1.0.27,<1.1",
+  "torch>=2.7",
+]
+
+[project.optional-dependencies]
+coreml = ["coremltools==9.0"]
+
+[project.scripts]
+depth-pro-2 = "depth_pro_2.cli:main_cli"
+
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
+lint.select = ["E", "F", "D", "I"]
+lint.ignore = ["D1", "D401"]
+src = ["src"]
+target-version = "py311"
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
