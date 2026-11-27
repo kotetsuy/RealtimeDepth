@@ -2,6 +2,8 @@
 
 Depth Anything V2 と Depth Pro 2 を AMD Ryzen AI MAX+ 395 (gfx1151) 上の PyTorch (ROCm) で実行し、USB カメラまたは動画の映像と深度マップをブラウザーに表示します。
 
+> Depth Pro 2 には非商用の研究目的に限るライセンスが適用されます。利用や再配布の前に[ライセンスと利用条件](#ライセンスと利用条件)を確認してください。
+
 このドキュメントは **`git clone` から `./start_all.sh` でブラウザ表示が
 始まるところまで** の手順書です。技術的な内容は [TECHNICALJ.md](./TECHNICALJ.md)
 を参照してください。
@@ -267,9 +269,21 @@ Chrome に元映像と深度マップ (近=明 / 遠=暗) が横並びで表示�
 
 `start_all.sh` は `.venv-depthpro2` がある場合、この環境と `.cache/torch` を使用します。Depth Pro 2 のソースとライセンスは `vendor/depth-pro-2` にあります。標準設定では `~/RealtimeDepth2` を参照しません。仮想環境のベース Python と Depth Anything V2 の公式リポジトリは、このフォルダの外に配置できます。環境を再作成する場合は `bash setup_depthpro2.sh` を実行してください。`VENV_DIR` と `TORCH_HOME` で別の環境やキャッシュを指定することもできます。コピー済み以外の重みは初回に取得が必要です。
 
-Depth Pro 2 のモデルは非商用の科学研究・学術開発用途に限定されています。使用前に公式ソースの `LICENSE_MODEL`、`LICENSE`、`ACKNOWLEDGEMENTS` を確認してください。
+## ライセンスと利用条件
+
+このリポジトリのルートにある [LICENSE](LICENSE) は Apache License 2.0 ですが、同梱または別途取得するすべての構成要素を Apache 2.0 の条件で利用できるわけではありません。各構成要素のライセンスを確認してください。
+
+**Depth Pro 2 のモデルライセンス**は、利用、複製、改変、配布を非商用の科学研究・学術開発目的に限定しています。商用利用、製品開発、商用製品・サービスでの利用は、このライセンスの許諾範囲外です。会社の業務や商用デモで使う場合は、事前に権利者の許諾を確認してください。Apple の定義するモデルには、重みだけでなく、アルゴリズム、設定、チェックポイント、関連文書なども含まれます。条件の全文は [LICENSE_MODEL](vendor/depth-pro-2/LICENSE_MODEL) を参照してください。
+
+Depth Pro 2 のモデルや派生物を再配布する場合、Apple はモデルライセンスのコピーと下記の表示を求めています。派生物には、その旨と変更内容の明示も必要です。このリポジトリにはモデルライセンスと表示を含めていますが、利用目的や配布する成果物に応じて、適用条件の確認が必要です。
 
 Apple Machine Learning Research Model is licensed under the Apple Machine Learning Research Model License Agreement.
+
+**Depth Pro 2 のソースコード**には、別の [Apple ソフトウェアライセンス](vendor/depth-pro-2/LICENSE) が適用されます。[ACKNOWLEDGEMENTS](vendor/depth-pro-2/ACKNOWLEDGEMENTS) には第三者の著作権表示とライセンスが記載されています。モデル重みは Git 管理対象に含めていませんが、重みを同梱しない場合も、モデルや関連資料に適用される条件を確認してください。
+
+Depth Anything V2 のコードとチェックポイント、依存ライブラリ、動画素材には、それぞれ別のライセンスや利用条件があります。Depth Anything V2 のモデルは種類によって条件が異なるため、使用するモデルの公式配布元で確認してください。動画のクレジットは `videos/playlist.m3u8` に記載しています。すべての依存物と動画素材のライセンスを網羅的に監査したわけではありません。
+
+公開・再配布や組織での利用について判断が必要な場合は、利用目的と配布物を整理し、法務担当者または専門家に確認してください。
 
 ---
 

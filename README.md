@@ -2,6 +2,8 @@
 
 A PyTorch ROCm demo for Depth Anything V2 and Depth Pro 2 on AMD Ryzen AI MAX+ 395 (gfx1151). It streams a USB camera or playlist video alongside its depth map to a browser.
 
+> Depth Pro 2 is subject to a noncommercial research-only model license. Review [Licenses and usage conditions](#licenses-and-usage-conditions) before using or redistributing it.
+
 This document walks you from **`git clone` to `./start_all.sh` showing the
 stream in your browser**. For architecture and design rationale, see
 [TECHNICAL.md](./TECHNICAL.md).
@@ -280,9 +282,21 @@ Use the slider above the video to select Depth Anything V2 or Depth Pro 2. Depth
 
 `start_all.sh` prefers `.venv-depthpro2`, falling back to `.venv-rocm10.2` if absent. The fallback must have Depth Pro 2 installed to use that model. `VENV_DIR` and `TORCH_HOME` override the environment and cache paths; the default cache is `.cache/torch`. Source and license files are in `vendor/depth-pro-2`. The Python interpreter backing the venv and the Depth Anything V2 repository may be outside this directory. `~/RealtimeDepth2` is not needed by the default setup. Model weights not already cached are downloaded on first use.
 
-Depth Pro 2 model weights are limited to noncommercial scientific research and academic development. Read `vendor/depth-pro-2/LICENSE_MODEL`, `LICENSE`, and `ACKNOWLEDGEMENTS` before use.
+## Licenses and usage conditions
+
+The root [LICENSE](LICENSE) is Apache License 2.0. Third-party components and separately obtained assets retain their own licenses; the root license does not make every component available under Apache 2.0.
+
+**Depth Pro 2 model license:** use, copying, modification, and distribution are restricted to noncommercial scientific research and academic development. Commercial exploitation, product development, and use in a commercial product or service are outside its grant. Obtain appropriate permission before use in company work or commercial demonstrations. Apple's definition of the model includes algorithms, configurations, checkpoints, and related documentation as well as weights. See the complete [LICENSE_MODEL](vendor/depth-pro-2/LICENSE_MODEL).
+
+Redistribution of the model or derivatives requires a copy of the model agreement and the attribution below. Derivatives must also be identified and their modifications disclosed. This repository includes the model agreement and attribution, but the applicable conditions depend on the purpose and materials being distributed.
 
 Apple Machine Learning Research Model is licensed under the Apple Machine Learning Research Model License Agreement.
+
+**Depth Pro 2 source code** is subject to a separate [Apple software license](vendor/depth-pro-2/LICENSE). [ACKNOWLEDGEMENTS](vendor/depth-pro-2/ACKNOWLEDGEMENTS) contains third-party notices and licenses. Model weights are not tracked in Git; omitting them does not remove conditions that apply to the model or related materials.
+
+Depth Anything V2 code and checkpoints, dependencies, and video footage have their own licenses and conditions. Depth Anything V2 model terms vary by model; check the official distribution for the model used. Video credits are listed in `videos/playlist.m3u8`. The licenses of all dependencies and videos have not been comprehensively audited.
+
+For a distribution or organizational use requiring a definitive assessment, consult qualified legal counsel with the intended purpose and materials.
 
 ---
 
